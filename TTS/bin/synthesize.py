@@ -101,6 +101,12 @@ def main():
         help="list available pre-trained tts and vocoder models.",
     )
     parser.add_argument("--text", type=str, default=None, help="Text to generate speech.")
+    parser.add_argument(
+        '--file_path',
+        default=None,
+        type=str,
+        help="Path to the text file to convert to speech (mutually exclusive with --text)."
+    )
 
     # Args for running pre-trained TTS models.
     parser.add_argument(
@@ -178,6 +184,12 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.text is None and args.file_path is not None and not args.list_models and not args.list_speaker_idxs:
+        print("Using text file.")
+        with open(args.file_path, "r") as ttsfile:
+            print("Text file open.")
+            args.text = ttsfile.read()
 
     # print the description if either text or list_models is not set
     if args.text is None and not args.list_models and not args.list_speaker_idxs:
