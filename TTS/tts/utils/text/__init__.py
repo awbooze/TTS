@@ -5,6 +5,7 @@ import re
 from typing import Dict, List
 
 import gruut
+from gruut_ipa import IPA
 
 from TTS.tts.utils.text import cleaners
 from TTS.tts.utils.text.chinese_mandarin.phonemizer import chinese_text_to_phonemes
@@ -53,24 +54,16 @@ def text2phone(text, language, use_espeak_phonemes=False):
 
     if gruut.is_language_supported(language):
         # Use gruut for phonemization
-        phonemizer_args = {
-            "remove_stress": True,
-            "ipa_minor_breaks": False,  # don't replace commas/semi-colons with IPA |
-            "ipa_major_breaks": False,  # don't replace periods with IPA ‖
-        }
+        ph_list = []
+        for sentence in gruut.sentences(text, lang=language, espeak=use_espeak_phonemes):
+            for word in sentence:
+                if word.is_break:
+                    if not ph_list:
+                        ph_list.append("")
 
-        if use_espeak_phonemes:
-            # Use a lexicon/g2p model train on eSpeak IPA instead of gruut IPA.
-            # This is intended for backwards compatibility with TTS<=v0.0.13
-            # pre-trained models.
-            phonemizer_args["model_prefix"] = "espeak"
-
-        ph_list = gruut.text_to_phonemes(
-            text,
-            lang=language,
-            return_format="word_phonemes",
-            phonemizer_args=phonemizer_args,
-        )
+                    ph_list[-1] += word.text
+                elif word.phonemes:
+                    ph_list.append("".join(IPA.without_stress(p) for p in word.phonemes))
 
         # Join and re-split to break apart dipthongs, suprasegmentals, etc.
         ph_words = ["|".join(word_phonemes) for word_phonemes in ph_list]
