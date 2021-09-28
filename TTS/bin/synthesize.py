@@ -5,10 +5,10 @@ import argparse
 import os
 import sys
 from argparse import RawTextHelpFormatter
-from typing import List, Optional
 
 # pylint: disable=redefined-outer-name, unused-argument
 from pathlib import Path
+from typing import List, Optional
 
 from TTS.utils.manage import ModelManager
 from TTS.utils.synthesizer import Synthesizer, VoiceConfig

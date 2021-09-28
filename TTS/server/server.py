@@ -14,6 +14,7 @@ from TTS.config import load_config
 from TTS.utils.manage import ModelManager
 from TTS.utils.synthesizer import Synthesizer, VoiceConfig
 
+
 def str2bool(v):
     if isinstance(v, bool):
         return v
@@ -22,6 +23,7 @@ def str2bool(v):
     if v.lower() in ("no", "false", "f", "n", "0", "off"):
         return False
     raise argparse.ArgumentTypeError("Boolean value expected.")
+
 
 def create_argparser():
     def convert_boolean(x):

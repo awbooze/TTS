@@ -9,18 +9,18 @@ import pysbd
 import torch
 
 from TTS.config import load_config
+from TTS.tts.configs.shared_configs import BaseTTSConfig
 from TTS.tts.models import setup_model as setup_tts_model
 from TTS.tts.models.base_tts import BaseTTS
-from TTS.tts.configs.shared_configs import BaseTTSConfig
-from TTS.vocoder.models.base_vocoder import BaseVocoder
-from TTS.vocoder.configs.shared_configs import BaseVocoderConfig
 from TTS.tts.utils.speakers import SpeakerManager
 
 # pylint: disable=unused-wildcard-import
 # pylint: disable=wildcard-import
 from TTS.tts.utils.synthesis import synthesis, trim_silence
 from TTS.utils.audio import AudioProcessor
+from TTS.vocoder.configs.shared_configs import BaseVocoderConfig
 from TTS.vocoder.models import setup_model as setup_vocoder_model
+from TTS.vocoder.models.base_vocoder import BaseVocoder
 from TTS.vocoder.utils.generic_utils import interpolate_vocoder_input
 
 
