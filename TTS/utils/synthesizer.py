@@ -239,7 +239,9 @@ class Synthesizer(object):
 
             if voice.lang not in self.seg_by_lang:
                 # Load sentence segementer for language
-                self.seg_by_lang[voice.lang] = self._get_segmenter(voice.lang[:2])
+                short_lang = voice.lang[:2]
+                self.seg_by_lang[voice.lang] = self._get_segmenter(short_lang)
+                self.seg_by_lang[short_lang] = self._get_segmenter(short_lang)
 
         # Set properties for default voice
         self.default_voice = self.voices[0]
@@ -331,9 +333,6 @@ class Synthesizer(object):
             #
             # POS tagging and phonemization is disabled since it will be done in
             # a later stage.
-            #
-            # Numbers are not verbalized here either in order to not interfere
-            # with the text cleaners.
             sens = list(
                 gruut.sentences(
                     text,
@@ -341,7 +340,6 @@ class Synthesizer(object):
                     ssml=True,
                     pos=False,
                     phonemize=False,
-                    verbalize_numbers=False,
                 )
             )
             print(" > Text splitted to sentences.")
