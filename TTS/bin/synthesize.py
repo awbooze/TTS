@@ -186,9 +186,9 @@ def main():
     args = parser.parse_args()
 
     if args.text is None and args.file_path is not None and not args.list_models and not args.list_speaker_idxs:
-        print("Using text file.")
-        with open(args.file_path, "r") as ttsfile:
-            print("Text file open.")
+        path = args.file_path
+        print(f" > Using text file at {path}")
+        with open(path, "r") as ttsfile:
             args.text = ttsfile.read()
 
     # print the description if either text or list_models is not set
