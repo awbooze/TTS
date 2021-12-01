@@ -2,21 +2,25 @@ from dataclasses import dataclass, field
 from typing import List
 
 from TTS.tts.configs.shared_configs import BaseTTSConfig
-from TTS.tts.models.fast_pitch import FastPitchArgs
+from TTS.tts.models.forward_tts import ForwardTTSArgs
 
 
 @dataclass
 class FastPitchConfig(BaseTTSConfig):
-    """Defines parameters for Speedy Speech (feed-forward encoder-decoder) based models.
+    """Configure `ForwardTTS` as FastPitch model.
 
     Example:
 
-        >>> from TTS.tts.configs import FastPitchConfig
+        >>> from TTS.tts.configs.fast_pitch_config import FastPitchConfig
         >>> config = FastPitchConfig()
 
     Args:
         model (str):
             Model name used for selecting the right model at initialization. Defaults to `fast_pitch`.
+
+        base_model (str):
+            Name of the base model being configured as this model so that 🐸 TTS knows it needs to initiate
+            the base model rather than searching for the `model` implementation. Defaults to `forward_tts`.
 
         model_args (Coqpit):
             Model class arguments. Check `FastPitchArgs` for more details. Defaults to `FastPitchArgs()`.
@@ -25,6 +29,10 @@ class FastPitchConfig(BaseTTSConfig):
             Number of steps used for computing normalization parameters at the beginning of the training. GlowTTS uses
             Activation Normalization that pre-computes normalization stats at the beginning and use the same values
             for the rest. Defaults to 10.
+
+        speakers_file (str):
+            Path to the file containing the list of speakers. Needed at inference for loading matching speaker ids to
+            speaker names. Defaults to `None`.
 
         use_speaker_embedding (bool):
             enable / disable using speaker embeddings for multi-speaker models. If set True, the model is
@@ -36,14 +44,35 @@ class FastPitchConfig(BaseTTSConfig):
         d_vector_file (str):
             Path to the file including pre-computed speaker embeddings. Defaults to None.
 
-        noam_schedule (bool):
-            enable / disable the use of Noam LR scheduler. Defaults to False.
+        d_vector_dim (int):
+            Dimension of the external speaker embeddings. Defaults to 0.
 
-        warmup_steps (int):
-            Number of warm-up steps for the Noam scheduler. Defaults 4000.
+        optimizer (str):
+            Name of the model optimizer. Defaults to `Adam`.
+
+        optimizer_params (dict):
+            Arguments of the model optimizer. Defaults to `{"betas": [0.9, 0.998], "weight_decay": 1e-6}`.
+
+        lr_scheduler (str):
+            Name of the learning rate scheduler. Defaults to `Noam`.
+
+        lr_scheduler_params (dict):
+            Arguments of the learning rate scheduler. Defaults to `{"warmup_steps": 4000}`.
 
         lr (float):
             Initial learning rate. Defaults to `1e-3`.
+
+        grad_clip (float):
+            Gradient norm clipping value. Defaults to `5.0`.
+
+        spec_loss_type (str):
+            Type of the spectrogram loss. Check `ForwardTTSLoss` for possible values. Defaults to `mse`.
+
+        duration_loss_type (str):
+            Type of the duration loss. Check `ForwardTTSLoss` for possible values. Defaults to `mse`.
+
+        use_ssim_loss (bool):
+            Enable/disable the use of SSIM (Structural Similarity) loss. Defaults to True.
 
         wd (float):
             Weight decay coefficient. Defaults to `1e-7`.
@@ -51,7 +80,7 @@ class FastPitchConfig(BaseTTSConfig):
         ssim_loss_alpha (float):
             Weight for the SSIM loss. If set 0, disables the SSIM loss. Defaults to 1.0.
 
-        huber_loss_alpha (float):
+        dur_loss_alpha (float):
             Weight for the duration predictor's loss. If set 0, disables the huber loss. Defaults to 1.0.
 
         spec_loss_alpha (float):
@@ -74,10 +103,14 @@ class FastPitchConfig(BaseTTSConfig):
     """
 
     model: str = "fast_pitch"
+    base_model: str = "forward_tts"
+
     # model specific params
-    model_args: FastPitchArgs = field(default_factory=FastPitchArgs)
+    model_args: ForwardTTSArgs = ForwardTTSArgs()
 
     # multi-speaker settings
+    num_speakers: int = 0
+    speakers_file: str = None
     use_speaker_embedding: bool = False
     use_d_vector_file: bool = False
     d_vector_file: str = False
@@ -92,11 +125,13 @@ class FastPitchConfig(BaseTTSConfig):
     grad_clip: float = 5.0
 
     # loss params
+    spec_loss_type: str = "mse"
+    duration_loss_type: str = "mse"
+    use_ssim_loss: bool = True
     ssim_loss_alpha: float = 1.0
     dur_loss_alpha: float = 1.0
     spec_loss_alpha: float = 1.0
     pitch_loss_alpha: float = 1.0
-    dur_loss_alpha: float = 1.0
     aligner_loss_alpha: float = 1.0
     binary_align_loss_alpha: float = 1.0
     binary_align_loss_start_step: int = 20000
@@ -120,3 +155,22 @@ class FastPitchConfig(BaseTTSConfig):
             "Prior to November 22, 1963.",
         ]
     )
+
+    def __post_init__(self):
+        # Pass multi-speaker parameters to the model args as `model.init_multispeaker()` looks for it there.
+        if self.num_speakers > 0:
+            self.model_args.num_speakers = self.num_speakers
+
+        # speaker embedding settings
+        if self.use_speaker_embedding:
+            self.model_args.use_speaker_embedding = True
+        if self.speakers_file:
+            self.model_args.speakers_file = self.speakers_file
+
+        # d-vector settings
+        if self.use_d_vector_file:
+            self.model_args.use_d_vector_file = True
+        if self.d_vector_dim is not None and self.d_vector_dim > 0:
+            self.model_args.d_vector_dim = self.d_vector_dim
+        if self.d_vector_file:
+            self.model_args.d_vector_file = self.d_vector_file

@@ -19,6 +19,8 @@
 
 📄 [Text-to-Speech paper collection](https://github.com/erogol/TTS-papers)
 
+<img src="https://static.scarf.sh/a.png?x-pxid=cf317fe7-2188-4721-bc01-124bb5d5dbb2" />
+
 ## 💬 Where to ask questions
 Please use our dedicated channels for questions and discussion. Help is much more valuable if it's shared publicly so that more people can benefit from it.
 
@@ -72,6 +74,8 @@ Underlined "TTS*" and "Judy*" are 🐸TTS models
 - Glow-TTS: [paper](https://arxiv.org/abs/2005.11129)
 - Speedy-Speech: [paper](https://arxiv.org/abs/2008.03802)
 - Align-TTS: [paper](https://arxiv.org/abs/2003.01950)
+- FastPitch: [paper](https://arxiv.org/pdf/2006.06873.pdf)
+- FastSpeech: [paper](https://arxiv.org/abs/1905.09263)
 
 ### End-to-End Models
 - VITS: [paper](https://arxiv.org/pdf/2106.06103)
@@ -82,6 +86,7 @@ Underlined "TTS*" and "Judy*" are 🐸TTS models
 - Graves Attention: [paper](https://arxiv.org/abs/1910.10288)
 - Double Decoder Consistency: [blog](https://erogol.com/solving-attention-problems-of-tts-models-with-double-decoder-consistency/)
 - Dynamic Convolutional Attention: [paper](https://arxiv.org/pdf/1910.10288.pdf)
+- Alignment Network: [paper](https://arxiv.org/abs/2108.10447)
 
 ### Speaker Encoder
 - GE2E: [paper](https://arxiv.org/abs/1710.10467)
@@ -151,5 +156,3 @@ If you are on Windows, 👑@GuyPaddock wrote installation instructions [here](ht
     |- vocoder/         (Vocoder models.)
         |- (same)
 ```
-
-<img src="https://static.scarf.sh/a.png?x-pxid=503c242f-a253-4fb8-8071-ce1dc1e89999" />

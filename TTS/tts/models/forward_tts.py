@@ -11,16 +11,15 @@ from TTS.tts.layers.feed_forward.encoder import Encoder
 from TTS.tts.layers.generic.aligner import AlignmentNetwork
 from TTS.tts.layers.generic.pos_encoding import PositionalEncoding
 from TTS.tts.layers.glow_tts.duration_predictor import DurationPredictor
-from TTS.tts.layers.glow_tts.monotonic_align import generate_path, maximum_path
 from TTS.tts.models.base_tts import BaseTTS
-from TTS.tts.utils.data import sequence_mask
+from TTS.tts.utils.helpers import average_over_durations, generate_path, maximum_path, sequence_mask
+from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.visual import plot_alignment, plot_pitch, plot_spectrogram
-from TTS.utils.audio import AudioProcessor
 
 
 @dataclass
-class FastPitchArgs(Coqpit):
-    """Fast Pitch Model arguments.
+class ForwardTTSArgs(Coqpit):
+    """ForwardTTS Model arguments.
 
     Args:
 
@@ -33,8 +32,13 @@ class FastPitchArgs(Coqpit):
         hidden_channels (int):
             Number of base hidden channels of the model. Defaults to 512.
 
-        num_speakers (int):
-            Number of speakers for the speaker embedding layer. Defaults to 0.
+        use_aligner (bool):
+            Whether to use aligner network to learn the text to speech alignment or use pre-computed durations.
+            If set False, durations should be computed by `TTS/bin/compute_attention_masks.py` and path to the
+            pre-computed durations must be provided to `config.datasets[0].meta_file_attn_mask`. Defaults to True.
+
+        use_pitch (bool):
+            Use pitch predictor to learn the pitch. Defaults to True.
 
         duration_predictor_hidden_channels (int):
             Number of hidden channels in the duration predictor. Defaults to 256.
@@ -80,12 +84,6 @@ class FastPitchArgs(Coqpit):
         decoder_params (str):
             Parameters of the decoder module. Defaults to ```{"hidden_channels_ffn": 1024, "num_heads": 1, "num_layers": 6, "dropout_p": 0.1}```
 
-        use_d_vetor (bool):
-            Whether to use precomputed d-vectors for multi-speaker training. Defaults to False.
-
-        d_vector_dim (int):
-            Number of channels of the d-vectors. Defaults to 0.
-
         detach_duration_predictor (bool):
             Detach the input to the duration predictor from the earlier computation graph so that the duraiton loss
             does not pass to the earlier layers. Defaults to True.
@@ -93,21 +91,35 @@ class FastPitchArgs(Coqpit):
         max_duration (int):
             Maximum duration accepted by the model. Defaults to 75.
 
-        use_aligner (bool):
-            Use aligner network to learn the text to speech alignment. Defaults to True.
+        num_speakers (int):
+            Number of speakers for the speaker embedding layer. Defaults to 0.
+
+        speakers_file (str):
+            Path to the speaker mapping file for the Speaker Manager. Defaults to None.
+
+        speaker_embedding_channels (int):
+            Number of speaker embedding channels. Defaults to 256.
+
+        use_d_vector_file (bool):
+            Enable/Disable the use of d-vectors for multi-speaker training. Defaults to False.
+
+        d_vector_dim (int):
+            Number of d-vector channels. Defaults to 0.
+
     """
 
     num_chars: int = None
     out_channels: int = 80
     hidden_channels: int = 384
-    num_speakers: int = 0
-    duration_predictor_hidden_channels: int = 256
-    duration_predictor_kernel_size: int = 3
-    duration_predictor_dropout_p: float = 0.1
+    use_aligner: bool = True
+    use_pitch: bool = True
     pitch_predictor_hidden_channels: int = 256
     pitch_predictor_kernel_size: int = 3
     pitch_predictor_dropout_p: float = 0.1
     pitch_embedding_kernel_size: int = 3
+    duration_predictor_hidden_channels: int = 256
+    duration_predictor_kernel_size: int = 3
+    duration_predictor_dropout_p: float = 0.1
     positional_encoding: bool = True
     poisitonal_encoding_use_scale: bool = True
     length_scale: int = 1
@@ -119,62 +131,55 @@ class FastPitchArgs(Coqpit):
     decoder_params: dict = field(
         default_factory=lambda: {"hidden_channels_ffn": 1024, "num_heads": 1, "num_layers": 6, "dropout_p": 0.1}
     )
-    use_d_vector: bool = False
-    d_vector_dim: int = 0
     detach_duration_predictor: bool = False
     max_duration: int = 75
-    use_aligner: bool = True
+    num_speakers: int = 1
+    use_speaker_embedding: bool = False
+    speakers_file: str = None
+    use_d_vector_file: bool = False
+    d_vector_dim: int = None
+    d_vector_file: str = None
 
 
-class FastPitch(BaseTTS):
-    """FastPitch model. Very similart to SpeedySpeech model but with pitch prediction.
+class ForwardTTS(BaseTTS):
+    """General forward TTS model implementation that uses an encoder-decoder architecture with an optional alignment
+    network and a pitch predictor.
 
-    Paper::
-        https://arxiv.org/abs/2006.06873
+    If the alignment network is used, the model learns the text-to-speech alignment
+    from the data instead of using pre-computed durations.
 
-    Paper abstract::
-        We present FastPitch, a fully-parallel text-to-speech model based on FastSpeech, conditioned on fundamental
-        frequency contours. The model predicts pitch contours during inference. By altering these predictions,
-        the generated speech can be more expressive, better match the semantic of the utterance, and in the end
-        more engaging to the listener. Uniformly increasing or decreasing pitch with FastPitch generates speech
-        that resembles the voluntary modulation of voice. Conditioning on frequency contours improves the overall
-        quality of synthesized speech, making it comparable to state-of-the-art. It does not introduce an overhead,
-        and FastPitch retains the favorable, fully-parallel Transformer architecture, with over 900x real-time
-        factor for mel-spectrogram synthesis of a typical utterance."
+    If the pitch predictor is used, the model trains a pitch predictor that predicts average pitch value for each
+    input character as in the FastPitch model.
+
+    `ForwardTTS` can be configured to one of these architectures,
+
+        - FastPitch
+        - SpeedySpeech
+        - FastSpeech
+        - TODO: FastSpeech2 (requires average speech energy predictor)
 
     Args:
         config (Coqpit): Model coqpit class.
+        speaker_manager (SpeakerManager): Speaker manager for multi-speaker training. Only used for multi-speaker models.
+            Defaults to None.
 
     Examples:
-        >>> from TTS.tts.models.fast_pitch import FastPitch, FastPitchArgs
-        >>> config = FastPitchArgs()
-        >>> model = FastPitch(config)
+        >>> from TTS.tts.models.fast_pitch import ForwardTTS, ForwardTTSArgs
+        >>> config = ForwardTTSArgs()
+        >>> model = ForwardTTS(config)
     """
 
     # pylint: disable=dangerous-default-value
-    def __init__(self, config: Coqpit):
+    def __init__(self, config: Coqpit, speaker_manager: SpeakerManager = None):
 
-        super().__init__()
+        super().__init__(config)
 
-        # don't use isintance not to import recursively
-        if config.__class__.__name__ == "FastPitchConfig":
-            if "characters" in config:
-                # loading from FasrPitchConfig
-                _, self.config, num_chars = self.get_characters(config)
-                config.model_args.num_chars = num_chars
-                self.args = self.config.model_args
-            else:
-                # loading from FastPitchArgs
-                self.config = config
-                self.args = config.model_args
-        elif isinstance(config, FastPitchArgs):
-            self.args = config
-            self.config = config
-        else:
-            raise ValueError("config must be either a VitsConfig or Vitsself.args")
+        self.speaker_manager = speaker_manager
+        self.init_multispeaker(config)
 
         self.max_duration = self.args.max_duration
         self.use_aligner = self.args.use_aligner
+        self.use_pitch = self.args.use_pitch
         self.use_binary_alignment_loss = False
 
         self.length_scale = (
@@ -188,7 +193,7 @@ class FastPitch(BaseTTS):
             self.args.hidden_channels,
             self.args.encoder_type,
             self.args.encoder_params,
-            self.args.d_vector_dim,
+            self.embedded_speaker_dim,
         )
 
         if self.args.positional_encoding:
@@ -202,38 +207,56 @@ class FastPitch(BaseTTS):
         )
 
         self.duration_predictor = DurationPredictor(
-            self.args.hidden_channels + self.args.d_vector_dim,
+            self.args.hidden_channels + self.embedded_speaker_dim,
             self.args.duration_predictor_hidden_channels,
             self.args.duration_predictor_kernel_size,
             self.args.duration_predictor_dropout_p,
         )
 
-        self.pitch_predictor = DurationPredictor(
-            self.args.hidden_channels + self.args.d_vector_dim,
-            self.args.pitch_predictor_hidden_channels,
-            self.args.pitch_predictor_kernel_size,
-            self.args.pitch_predictor_dropout_p,
-        )
-
-        self.pitch_emb = nn.Conv1d(
-            1,
-            self.args.hidden_channels,
-            kernel_size=self.args.pitch_embedding_kernel_size,
-            padding=int((self.args.pitch_embedding_kernel_size - 1) / 2),
-        )
-
-        if self.args.num_speakers > 1 and not self.args.use_d_vector:
-            # speaker embedding layer
-            self.emb_g = nn.Embedding(self.args.num_speakers, self.args.d_vector_dim)
-            nn.init.uniform_(self.emb_g.weight, -0.1, 0.1)
-
-        if self.args.d_vector_dim > 0 and self.args.d_vector_dim != self.args.hidden_channels:
-            self.proj_g = nn.Conv1d(self.args.d_vector_dim, self.args.hidden_channels, 1)
+        if self.args.use_pitch:
+            self.pitch_predictor = DurationPredictor(
+                self.args.hidden_channels + self.embedded_speaker_dim,
+                self.args.pitch_predictor_hidden_channels,
+                self.args.pitch_predictor_kernel_size,
+                self.args.pitch_predictor_dropout_p,
+            )
+            self.pitch_emb = nn.Conv1d(
+                1,
+                self.args.hidden_channels,
+                kernel_size=self.args.pitch_embedding_kernel_size,
+                padding=int((self.args.pitch_embedding_kernel_size - 1) / 2),
+            )
 
         if self.args.use_aligner:
             self.aligner = AlignmentNetwork(
                 in_query_channels=self.args.out_channels, in_key_channels=self.args.hidden_channels
             )
+
+    def init_multispeaker(self, config: Coqpit):
+        """Init for multi-speaker training.
+
+        Args:
+            config (Coqpit): Model configuration.
+        """
+        self.embedded_speaker_dim = 0
+        # init speaker manager
+        if self.speaker_manager is None and (config.use_d_vector_file or config.use_speaker_embedding):
+            raise ValueError(
+                " > SpeakerManager is not provided. You must provide the SpeakerManager before initializing a multi-speaker model."
+            )
+        # set number of speakers
+        if self.speaker_manager is not None:
+            self.num_speakers = self.speaker_manager.num_speakers
+        # init d-vector embedding
+        if config.use_d_vector_file:
+            self.embedded_speaker_dim = config.d_vector_dim
+            if self.args.d_vector_dim != self.args.hidden_channels:
+                self.proj_g = nn.Conv1d(self.args.d_vector_dim, self.args.hidden_channels, 1)
+        # init speaker embedding layer
+        if config.use_speaker_embedding and not config.use_d_vector_file:
+            print(" > Init speaker_embedding layer.")
+            self.emb_g = nn.Embedding(self.args.num_speakers, self.args.hidden_channels)
+            nn.init.uniform_(self.emb_g.weight, -0.1, 0.1)
 
     @staticmethod
     def generate_attn(dr, x_mask, y_mask=None):
@@ -257,18 +280,22 @@ class FastPitch(BaseTTS):
         """Generate attention alignment map from durations and
         expand encoder outputs
 
-        Shapes
+        Shapes:
             - en: :math:`(B, D_{en}, T_{en})`
             - dr: :math:`(B, T_{en})`
             - x_mask: :math:`(B, T_{en})`
             - y_mask: :math:`(B, T_{de})`
 
-        Examples:
-            - encoder output: :math:`[a,b,c,d]`
-            - durations: :math:`[1, 3, 2, 1]`
+        Examples::
 
-            - expanded: :math:`[a, b, b, b, c, c, d]`
-            - attention map: :math:`[[0, 0, 0, 0, 0, 0, 1], [0, 0, 0, 0, 1, 1, 0], [0, 1, 1, 1, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0]]`
+            encoder output: [a,b,c,d]
+            durations: [1, 3, 2, 1]
+
+            expanded: [a, b, b, b, c, c, d]
+            attention map: [[0, 0, 0, 0, 0, 0, 1],
+                            [0, 0, 0, 0, 1, 1, 0],
+                            [0, 1, 1, 1, 0, 0, 0],
+                            [1, 0, 0, 0, 0, 0, 0]]
         """
         attn = self.generate_attn(dr, x_mask, y_mask)
         o_en_ex = torch.matmul(attn.squeeze(1).transpose(1, 2).to(en.dtype), en.transpose(1, 2)).transpose(1, 2)
@@ -295,18 +322,6 @@ class FastPitch(BaseTTS):
         o_dr = torch.round(o_dr)
         return o_dr
 
-    @staticmethod
-    def _concat_speaker_embedding(o_en, g):
-        g_exp = g.expand(-1, -1, o_en.size(-1))  # [B, C, T_en]
-        o_en = torch.cat([o_en, g_exp], 1)
-        return o_en
-
-    def _sum_speaker_embedding(self, x, g):
-        # project g to decoder dim.
-        if hasattr(self, "proj_g"):
-            g = self.proj_g(g)
-        return x + g
-
     def _forward_encoder(
         self, x: torch.LongTensor, x_mask: torch.FloatTensor, g: torch.FloatTensor = None
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
@@ -315,7 +330,7 @@ class FastPitch(BaseTTS):
         1. Embed speaker IDs if multi-speaker mode.
         2. Embed character sequences.
         3. Run the encoder network.
-        4. Concat speaker embedding to the encoder output for the duration predictor.
+        4. Sum encoder outputs and speaker embeddings
 
         Args:
             x (torch.LongTensor): Input sequence IDs.
@@ -333,19 +348,18 @@ class FastPitch(BaseTTS):
             - g: :math:`(B, C)`
         """
         if hasattr(self, "emb_g"):
-            g = nn.functional.normalize(self.emb_g(g))  # [B, C, 1]
+            g = self.emb_g(g)  # [B, C, 1]
         if g is not None:
             g = g.unsqueeze(-1)
         # [B, T, C]
         x_emb = self.emb(x)
         # encoder pass
         o_en = self.encoder(torch.transpose(x_emb, 1, -1), x_mask)
-        # speaker conditioning for duration predictor
+        # speaker conditioning
+        # TODO: try different ways of conditioning
         if g is not None:
-            o_en_dp = self._concat_speaker_embedding(o_en, g)
-        else:
-            o_en_dp = o_en
-        return o_en, o_en_dp, x_mask, g, x_emb
+            o_en = o_en + g
+        return o_en, x_mask, g, x_emb
 
     def _forward_decoder(
         self,
@@ -379,9 +393,6 @@ class FastPitch(BaseTTS):
         # positional encoding
         if hasattr(self, "pos_encoder"):
             o_en_ex = self.pos_encoder(o_en_ex, y_mask)
-        # speaker embedding
-        if g is not None:
-            o_en_ex = self._sum_speaker_embedding(o_en_ex, g)
         # decoder pass
         o_de = self.decoder(o_en_ex, y_mask, g=g)
         return o_de.transpose(1, 2), attn.transpose(1, 2)
@@ -416,7 +427,7 @@ class FastPitch(BaseTTS):
         """
         o_pitch = self.pitch_predictor(o_en, x_mask)
         if pitch is not None:
-            avg_pitch = average_pitch(pitch, dr)
+            avg_pitch = average_over_durations(pitch, dr)
             o_pitch_emb = self.pitch_emb(avg_pitch)
             return o_pitch_emb, o_pitch, avg_pitch
         o_pitch_emb = self.pitch_emb(o_pitch)
@@ -463,6 +474,19 @@ class FastPitch(BaseTTS):
         alignment_soft = alignment_soft.squeeze(1).transpose(1, 2)
         return o_alignment_dur, alignment_soft, alignment_logprob, alignment_mas
 
+    def _set_speaker_input(self, aux_input: Dict):
+        d_vectors = aux_input.get("d_vectors", None)
+        speaker_ids = aux_input.get("speaker_ids", None)
+
+        if d_vectors is not None and speaker_ids is not None:
+            raise ValueError("[!] Cannot use d-vectors and speaker-ids together.")
+
+        if speaker_ids is not None and not hasattr(self, "emb_g"):
+            raise ValueError("[!] Cannot use speaker-ids without enabling speaker embedding.")
+
+        g = speaker_ids if speaker_ids is not None else d_vectors
+        return g
+
     def forward(
         self,
         x: torch.LongTensor,
@@ -471,7 +495,7 @@ class FastPitch(BaseTTS):
         y: torch.FloatTensor = None,
         dr: torch.IntTensor = None,
         pitch: torch.FloatTensor = None,
-        aux_input: Dict = {"d_vectors": 0, "speaker_ids": None},  # pylint: disable=unused-argument
+        aux_input: Dict = {"d_vectors": None, "speaker_ids": None},  # pylint: disable=unused-argument
     ) -> Dict:
         """Model's forward pass.
 
@@ -479,10 +503,10 @@ class FastPitch(BaseTTS):
             x (torch.LongTensor): Input character sequences.
             x_lengths (torch.LongTensor): Input sequence lengths.
             y_lengths (torch.LongTensor): Output sequnce lengths. Defaults to None.
-            y (torch.FloatTensor): Spectrogram frames. Defaults to None.
-            dr (torch.IntTensor): Character durations over the spectrogram frames. Defaults to None.
-            pitch (torch.FloatTensor): Pitch values for each spectrogram frame. Defaults to None.
-            aux_input (Dict): Auxiliary model inputs. Defaults to `{"d_vectors": 0, "speaker_ids": None}`.
+            y (torch.FloatTensor): Spectrogram frames. Only used when the alignment network is on. Defaults to None.
+            dr (torch.IntTensor): Character durations over the spectrogram frames. Only used when the alignment network is off. Defaults to None.
+            pitch (torch.FloatTensor): Pitch values for each spectrogram frame. Only used when the pitch predictor is on. Defaults to None.
+            aux_input (Dict): Auxiliary model inputs for multi-speaker training. Defaults to `{"d_vectors": 0, "speaker_ids": None}`.
 
         Shapes:
             - x: :math:`[B, T_max]`
@@ -493,41 +517,52 @@ class FastPitch(BaseTTS):
             - g: :math:`[B, C]`
             - pitch: :math:`[B, 1, T]`
         """
-        g = aux_input["d_vectors"] if "d_vectors" in aux_input else None
+        g = self._set_speaker_input(aux_input)
         # compute sequence masks
-        y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).to(y.dtype)
-        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).to(y.dtype)
+        y_mask = torch.unsqueeze(sequence_mask(y_lengths, None), 1).float()
+        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).float()
         # encoder pass
-        o_en, o_en_dp, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
+        o_en, x_mask, g, x_emb = self._forward_encoder(x, x_mask, g)
         # duration predictor pass
         if self.args.detach_duration_predictor:
-            o_dr_log = self.duration_predictor(o_en_dp.detach(), x_mask)
+            o_dr_log = self.duration_predictor(o_en.detach(), x_mask)
         else:
-            o_dr_log = self.duration_predictor(o_en_dp, x_mask)
+            o_dr_log = self.duration_predictor(o_en, x_mask)
         o_dr = torch.clamp(torch.exp(o_dr_log) - 1, 0, self.max_duration)
         # generate attn mask from predicted durations
         o_attn = self.generate_attn(o_dr.squeeze(1), x_mask)
-        # aligner pass
+        # aligner
+        o_alignment_dur = None
+        alignment_soft = None
+        alignment_logprob = None
+        alignment_mas = None
         if self.use_aligner:
             o_alignment_dur, alignment_soft, alignment_logprob, alignment_mas = self._forward_aligner(
                 x_emb, y, x_mask, y_mask
             )
+            alignment_soft = alignment_soft.transpose(1, 2)
+            alignment_mas = alignment_mas.transpose(1, 2)
             dr = o_alignment_dur
         # pitch predictor pass
-        o_pitch_emb, o_pitch, avg_pitch = self._forward_pitch_predictor(o_en_dp, x_mask, pitch, dr)
-        o_en = o_en + o_pitch_emb
+        o_pitch = None
+        avg_pitch = None
+        if self.args.use_pitch:
+            o_pitch_emb, o_pitch, avg_pitch = self._forward_pitch_predictor(o_en, x_mask, pitch, dr)
+            o_en = o_en + o_pitch_emb
         # decoder pass
-        o_de, attn = self._forward_decoder(o_en, dr, x_mask, y_lengths, g=g)
+        o_de, attn = self._forward_decoder(
+            o_en, dr, x_mask, y_lengths, g=None
+        )  # TODO: maybe pass speaker embedding (g) too
         outputs = {
-            "model_outputs": o_de,
-            "durations_log": o_dr_log.squeeze(1),
-            "durations": o_dr.squeeze(1),
-            "attn_durations": o_attn,  # for visualization
+            "model_outputs": o_de,  # [B, T, C]
+            "durations_log": o_dr_log.squeeze(1),  # [B, T]
+            "durations": o_dr.squeeze(1),  # [B, T]
+            "attn_durations": o_attn,  # for visualization [B, T_en, T_de']
             "pitch_avg": o_pitch,
             "pitch_avg_gt": avg_pitch,
-            "alignments": attn,
-            "alignment_soft": alignment_soft.transpose(1, 2),
-            "alignment_mas": alignment_mas.transpose(1, 2),
+            "alignments": attn,  # [B, T_de, T_en]
+            "alignment_soft": alignment_soft,
+            "alignment_mas": alignment_mas,
             "o_alignment_dur": o_alignment_dur,
             "alignment_logprob": alignment_logprob,
             "x_mask": x_mask,
@@ -548,20 +583,22 @@ class FastPitch(BaseTTS):
             - x_lengths: [B]
             - g: [B, C]
         """
-        g = aux_input["d_vectors"] if "d_vectors" in aux_input else None
+        g = self._set_speaker_input(aux_input)
         x_lengths = torch.tensor(x.shape[1:2]).to(x.device)
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.shape[1]), 1).to(x.dtype).float()
         # encoder pass
-        o_en, o_en_dp, x_mask, g, _ = self._forward_encoder(x, x_mask, g)
+        o_en, x_mask, g, _ = self._forward_encoder(x, x_mask, g)
         # duration predictor pass
-        o_dr_log = self.duration_predictor(o_en_dp, x_mask)
+        o_dr_log = self.duration_predictor(o_en, x_mask)
         o_dr = self.format_durations(o_dr_log, x_mask).squeeze(1)
         y_lengths = o_dr.sum(1)
         # pitch predictor pass
-        o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en_dp, x_mask)
-        o_en = o_en + o_pitch_emb
+        o_pitch = None
+        if self.args.use_pitch:
+            o_pitch_emb, o_pitch = self._forward_pitch_predictor(o_en, x_mask)
+            o_en = o_en + o_pitch_emb
         # decoder pass
-        o_de, attn = self._forward_decoder(o_en, o_dr, x_mask, y_lengths, g=g)
+        o_de, attn = self._forward_decoder(o_en, o_dr, x_mask, y_lengths, g=None)
         outputs = {
             "model_outputs": o_de,
             "alignments": attn,
@@ -575,7 +612,7 @@ class FastPitch(BaseTTS):
         text_lengths = batch["text_lengths"]
         mel_input = batch["mel_input"]
         mel_lengths = batch["mel_lengths"]
-        pitch = batch["pitch"]
+        pitch = batch["pitch"] if self.args.use_pitch else None
         d_vectors = batch["d_vectors"]
         speaker_ids = batch["speaker_ids"]
         durations = batch["durations"]
@@ -597,10 +634,10 @@ class FastPitch(BaseTTS):
                 decoder_output_lens=mel_lengths,
                 dur_output=outputs["durations_log"],
                 dur_target=durations,
-                pitch_output=outputs["pitch_avg"],
-                pitch_target=outputs["pitch_avg_gt"],
+                pitch_output=outputs["pitch_avg"] if self.use_pitch else None,
+                pitch_target=outputs["pitch_avg_gt"] if self.use_pitch else None,
                 input_lens=text_lengths,
-                alignment_logprob=outputs["alignment_logprob"],
+                alignment_logprob=outputs["alignment_logprob"] if self.use_aligner else None,
                 alignment_soft=outputs["alignment_soft"] if self.use_binary_alignment_loss else None,
                 alignment_hard=outputs["alignment_mas"] if self.use_binary_alignment_loss else None,
             )
@@ -611,31 +648,37 @@ class FastPitch(BaseTTS):
 
         return outputs, loss_dict
 
-    def train_log(self, ap: AudioProcessor, batch: dict, outputs: dict):  # pylint: disable=no-self-use
+    def _create_logs(self, batch, outputs, ap):
+        """Create common logger outputs."""
         model_outputs = outputs["model_outputs"]
         alignments = outputs["alignments"]
         mel_input = batch["mel_input"]
-        pitch = batch["pitch"]
-        pitch_avg_expanded, _ = self.expand_encoder_outputs(
-            outputs["pitch_avg"], outputs["durations"], outputs["x_mask"], outputs["y_mask"]
-        )
 
         pred_spec = model_outputs[0].data.cpu().numpy()
         gt_spec = mel_input[0].data.cpu().numpy()
         align_img = alignments[0].data.cpu().numpy()
-        pitch = pitch[0, 0].data.cpu().numpy()
-
-        # TODO: denormalize before plotting
-        pitch = abs(pitch)
-        pitch_avg_expanded = abs(pitch_avg_expanded[0, 0]).data.cpu().numpy()
 
         figures = {
             "prediction": plot_spectrogram(pred_spec, ap, output_fig=False),
             "ground_truth": plot_spectrogram(gt_spec, ap, output_fig=False),
             "alignment": plot_alignment(align_img, output_fig=False),
-            "pitch_ground_truth": plot_pitch(pitch, gt_spec, ap, output_fig=False),
-            "pitch_avg_predicted": plot_pitch(pitch_avg_expanded, pred_spec, ap, output_fig=False),
         }
+
+        # plot pitch figures
+        if self.args.use_pitch:
+            pitch = batch["pitch"]
+            pitch_avg_expanded, _ = self.expand_encoder_outputs(
+                outputs["pitch_avg"], outputs["durations"], outputs["x_mask"], outputs["y_mask"]
+            )
+            pitch = pitch[0, 0].data.cpu().numpy()
+            # TODO: denormalize before plotting
+            pitch = abs(pitch)
+            pitch_avg_expanded = abs(pitch_avg_expanded[0, 0]).data.cpu().numpy()
+            pitch_figures = {
+                "pitch_ground_truth": plot_pitch(pitch, gt_spec, ap, output_fig=False),
+                "pitch_avg_predicted": plot_pitch(pitch_avg_expanded, pred_spec, ap, output_fig=False),
+            }
+            figures.update(pitch_figures)
 
         # plot the attention mask computed from the predicted durations
         if "attn_durations" in outputs:
@@ -646,11 +689,22 @@ class FastPitch(BaseTTS):
         train_audio = ap.inv_melspectrogram(pred_spec.T)
         return figures, {"audio": train_audio}
 
+    def train_log(
+        self, batch: dict, outputs: dict, logger: "Logger", assets: dict, steps: int
+    ) -> None:  # pylint: disable=no-self-use
+        ap = assets["audio_processor"]
+        figures, audios = self._create_logs(batch, outputs, ap)
+        logger.train_figures(steps, figures)
+        logger.train_audios(steps, audios, ap.sample_rate)
+
     def eval_step(self, batch: dict, criterion: nn.Module):
         return self.train_step(batch, criterion)
 
-    def eval_log(self, ap: AudioProcessor, batch: dict, outputs: dict):
-        return self.train_log(ap, batch, outputs)
+    def eval_log(self, batch: dict, outputs: dict, logger: "Logger", assets: dict, steps: int) -> None:
+        ap = assets["audio_processor"]
+        figures, audios = self._create_logs(batch, outputs, ap)
+        logger.eval_figures(steps, figures)
+        logger.eval_audios(steps, audios, ap.sample_rate)
 
     def load_checkpoint(
         self, config, checkpoint_path, eval=False
@@ -662,36 +716,11 @@ class FastPitch(BaseTTS):
             assert not self.training
 
     def get_criterion(self):
-        from TTS.tts.layers.losses import FastPitchLoss  # pylint: disable=import-outside-toplevel
+        from TTS.tts.layers.losses import ForwardTTSLoss  # pylint: disable=import-outside-toplevel
 
-        return FastPitchLoss(self.config)
+        return ForwardTTSLoss(self.config)
 
     def on_train_step_start(self, trainer):
         """Enable binary alignment loss when needed"""
         if trainer.total_steps_done > self.config.binary_align_loss_start_step:
             self.use_binary_alignment_loss = True
-
-
-def average_pitch(pitch, durs):
-    """Compute the average pitch value for each input character based on the durations.
-
-    Shapes:
-        - pitch: :math:`[B, 1, T_de]`
-        - durs: :math:`[B, T_en]`
-    """
-
-    durs_cums_ends = torch.cumsum(durs, dim=1).long()
-    durs_cums_starts = torch.nn.functional.pad(durs_cums_ends[:, :-1], (1, 0))
-    pitch_nonzero_cums = torch.nn.functional.pad(torch.cumsum(pitch != 0.0, dim=2), (1, 0))
-    pitch_cums = torch.nn.functional.pad(torch.cumsum(pitch, dim=2), (1, 0))
-
-    bs, l = durs_cums_ends.size()
-    n_formants = pitch.size(1)
-    dcs = durs_cums_starts[:, None, :].expand(bs, n_formants, l)
-    dce = durs_cums_ends[:, None, :].expand(bs, n_formants, l)
-
-    pitch_sums = (torch.gather(pitch_cums, 2, dce) - torch.gather(pitch_cums, 2, dcs)).float()
-    pitch_nelems = (torch.gather(pitch_nonzero_cums, 2, dce) - torch.gather(pitch_nonzero_cums, 2, dcs)).float()
-
-    pitch_avg = torch.where(pitch_nelems == 0.0, pitch_nelems, pitch_sums / pitch_nelems)
-    return pitch_avg
