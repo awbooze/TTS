@@ -205,7 +205,10 @@ class Synthesizer(object):
                 use_cuda=use_cuda,
                 name=tts_name,
             )
-        ] + list(extra_voices)
+        ]
+
+        if extra_voices is not None:
+            self.voices += list(extra_voices)
 
         assert self.voices, "At least one voice is required"
 
@@ -343,7 +346,15 @@ class Synthesizer(object):
                 )
             )
             print(" > Text splitted to sentences.")
-            print([(s.text, s.voice, s.lang) for s in sens])
+            print(
+                [(
+                    "Pause " + str(s.pause_before_ms) + "ms", 
+                    s.text, 
+                    s.voice, 
+                    s.lang, 
+                    "Pause " + str(s.pause_after_ms) + "ms"
+                ) for s in sens]
+            )
         else:
             sens = self.split_into_sentences(text, lang=lang)
             print(" > Text splitted to sentences.")
@@ -380,6 +391,9 @@ class Synthesizer(object):
                 if (maybe_sen_voice is None) and sen.lang:
                     # lang was specified for this sentence
                     maybe_sen_voice = self.voice_by_lang.get(sen.lang)
+                    # Since all sentences have a language, make sure to set the sentence speaker idx
+                    # to the overall one. TODO: make sure this works for all voice combinations.
+                    maybe_sen_speaker_idx = sen_speaker_idx
 
                 if maybe_sen_voice is not None:
                     # voice or lang was successfully used to locate a TTS model
@@ -445,8 +459,18 @@ class Synthesizer(object):
                 # Resample to sample rate of default voice
                 waveform = librosa.resample(waveform, orig_sr=waveform_sample_rate, target_sr=self.output_sample_rate)
 
+            if (sen.pause_before_ms > 0):
+                # If there is a defined pause before a sentence, calculate it via the sample rate
+                wavs += [0] * round(sen.pause_before_ms / 1000) * self.output_sample_rate
+                
             wavs += list(waveform)
-            wavs += [0] * 10000
+            
+            if (sen.pause_after_ms > 0):
+                wavs += [0] * round(sen.pause_after_ms / 1000) * self.output_sample_rate
+            else:
+                # If no pause after a sentence, still include a slight pause. At a 22,050 hertz 
+                # sample rate, this is about 0.45 seconds of pause.
+                wavs += [0] * 10000
 
         # compute stats
         process_time = time.time() - start_time
