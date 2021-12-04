@@ -2,14 +2,16 @@
 # -*- coding: utf-8 -*-
 
 import argparse
+import os
 import sys
 from argparse import RawTextHelpFormatter
 
 # pylint: disable=redefined-outer-name, unused-argument
 from pathlib import Path
+from typing import List, Optional
 
 from TTS.utils.manage import ModelManager
-from TTS.utils.synthesizer import Synthesizer
+from TTS.utils.synthesizer import Synthesizer, VoiceConfig
 
 
 def str2bool(v):
@@ -121,6 +123,12 @@ def main():
         default=None,
         help="Name of one of the pre-trained  vocoder models in format <language>/<dataset>/<model_name>",
     )
+    parser.add_argument(
+        "--extra_model_name",
+        action="append",
+        default=[],
+        help="Additional TTS model name(s) to load in the format <language>/<dataset>/<model_name>",
+    )
 
     # Args for running custom models
     parser.add_argument("--config_path", default=None, type=str, help="Path to model config file.")
@@ -182,6 +190,12 @@ def main():
         help="If true save raw spectogram for further (vocoder) processing in out_path.",
         default=False,
     )
+    parser.add_argument(
+        "--ssml",
+        type=bool,
+        help="If true input text will be parsed as SSML",
+        default=False,
+    )
 
     args = parser.parse_args()
 
@@ -234,6 +248,28 @@ def main():
         encoder_path = args.encoder_path
         encoder_config_path = args.encoder_config_path
 
+    # Load any extra voices (for SSML)
+    extra_voices: Optional[List[VoiceConfig]] = None
+    if args.extra_model_name:
+        extra_voices = []
+        for extra_model_name in args.extra_model_name:
+            extra_model_path, extra_config_path, extra_model_item = manager.download_model(extra_model_name)
+            extra_vocoder_path, extra_vocoder_config_path = None, None
+            extra_vocoder_name = extra_model_item["default_vocoder"]
+            if extra_vocoder_name:
+                extra_vocoder_path, extra_vocoder_config_path, _ = manager.download_model(extra_vocoder_name)
+
+            extra_voices.append(
+                VoiceConfig(
+                    name=extra_model_name,
+                    tts_checkpoint=extra_model_path,
+                    tts_config_path=extra_config_path,
+                    vocoder_checkpoint=extra_vocoder_path,
+                    vocoder_config_path=extra_vocoder_config_path,
+                    use_cuda=args.use_cuda,
+                )
+            )
+
     # load models
     synthesizer = Synthesizer(
         model_path,
@@ -244,6 +280,7 @@ def main():
         encoder_path,
         encoder_config_path,
         args.use_cuda,
+        extra_voices=extra_voices,
     )
 
     # query speaker ids of a multi-speaker model.
@@ -263,10 +300,16 @@ def main():
         return
 
     # RUN THE SYNTHESIS
+    if args.text == "-":
+        if os.isatty(sys.stdin.fileno()):
+            print("Reading text from stdin...", file=sys.stderr)
+
+        args.text = sys.stdin.read()
+
     print(" > Text: {}".format(args.text))
 
     # kick it
-    wav = synthesizer.tts(args.text, args.speaker_idx, args.speaker_wav)
+    wav = synthesizer.tts(args.text, args.speaker_idx, args.speaker_wav, ssml=args.ssml)
 
     # save the results
     print(" > Saving output to {}".format(args.out_path))

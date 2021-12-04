@@ -1,17 +1,28 @@
 #!flask/bin/python
 import argparse
 import io
+import itertools
 import json
 import os
 import sys
 from pathlib import Path
-from typing import Union
+from typing import List, Optional, Union
 
 from flask import Flask, render_template, request, send_file
 
 from TTS.config import load_config
 from TTS.utils.manage import ModelManager
-from TTS.utils.synthesizer import Synthesizer
+from TTS.utils.synthesizer import Synthesizer, VoiceConfig
+
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ("yes", "true", "t", "y", "1", "on"):
+        return True
+    if v.lower() in ("no", "false", "f", "n", "0", "off"):
+        return False
+    raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
 def create_argparser():
@@ -33,7 +44,7 @@ def create_argparser():
         default="tts_models/en/ljspeech/tacotron2-DDC",
         help="Name of one of the pre-trained tts models in format <language>/<dataset>/<model_name>",
     )
-    parser.add_argument("--vocoder_name", type=str, default=None, help="name of one of the released vocoder models.")
+    parser.add_argument("--vocoder_name", type=str, help="name of one of the released vocoder models.")
 
     # Args for running custom models
     parser.add_argument("--config_path", default=None, type=str, help="Path to model config file.")
@@ -55,8 +66,31 @@ def create_argparser():
     parser.add_argument("--use_cuda", type=convert_boolean, default=False, help="true to use CUDA.")
     parser.add_argument("--debug", type=convert_boolean, default=False, help="true to enable Flask debug mode.")
     parser.add_argument("--show_details", type=convert_boolean, default=False, help="Generate model detail page.")
+    parser.add_argument(
+        "--extra_model_name",
+        action="append",
+        default=[],
+        help="Additional TTS model name(s) to load in the format <language>/<dataset>/<model_name>",
+    )
     return parser
 
+
+# parse the args
+args = create_argparser().parse_args()
+
+path = Path(__file__).parent / "../.models.json"
+manager = ModelManager(path)
+
+if args.list_models:
+    manager.list_models()
+    sys.exit()
+
+# update in-use models to the specified released models.
+model_path = None
+config_path = None
+speakers_file_path = None
+vocoder_path = None
+vocoder_config_path = None
 
 # parse the args
 args = create_argparser().parse_args()
@@ -98,15 +132,43 @@ if args.vocoder_path is not None:
     vocoder_path = args.vocoder_path
     vocoder_config_path = args.vocoder_config_path
 
+# Load any extra voices (for SSML)
+extra_voices: Optional[List[VoiceConfig]] = None
+if args.extra_model_name:
+    extra_voices = []
+    for extra_model_name in args.extra_model_name:
+        extra_model_path, extra_config_path, extra_model_item = manager.download_model(extra_model_name)
+        extra_vocoder_path, extra_vocoder_config_path = None, None
+        extra_vocoder_name = extra_model_item["default_vocoder"]
+        if extra_vocoder_name:
+            extra_vocoder_path, extra_vocoder_config_path, _ = manager.download_model(extra_vocoder_name)
+
+        extra_voices.append(
+            VoiceConfig(
+                name=extra_model_name,
+                tts_checkpoint=extra_model_path,
+                tts_config_path=extra_config_path,
+                vocoder_checkpoint=extra_vocoder_path,
+                vocoder_config_path=extra_vocoder_config_path,
+                use_cuda=args.use_cuda,
+            )
+        )
+
 # load models
 synthesizer = Synthesizer(
-    model_path, config_path, speakers_file_path, vocoder_path, vocoder_config_path, use_cuda=args.use_cuda
+    model_path,
+    config_path,
+    speakers_file_path,
+    vocoder_path,
+    vocoder_config_path,
+    use_cuda=args.use_cuda,
+    tts_name=args.model_name,
+    extra_voices=extra_voices,
 )
 
-use_multi_speaker = hasattr(synthesizer.tts_model, "speaker_manager") and synthesizer.tts_model.num_speakers > 1
-speaker_manager = getattr(synthesizer.tts_model, "speaker_manager", None)
-# TODO: set this from SpeakerManager
-use_gst = synthesizer.tts_config.get("use_gst", False)
+use_multi_speaker = any(v.use_multi_speaker for v in synthesizer.voices)
+use_gst = any(v.use_gst for v in synthesizer.voices)
+
 app = Flask(__name__)
 
 
@@ -125,7 +187,7 @@ def style_wav_uri_to_dict(style_wav: str) -> Union[str, dict]:
             return style_wav  # style_wav is a .wav file located on the server
 
         style_wav = json.loads(style_wav)
-        return style_wav  # style_wav is a gst dictionary with {token1_id : token1_weigth, ...}
+        return style_wav  # style_wav is a gst dictionary with {token1_id : token1_weight, ...}
     return None
 
 
@@ -135,8 +197,10 @@ def index():
         "index.html",
         show_details=args.show_details,
         use_multi_speaker=use_multi_speaker,
-        speaker_ids=speaker_manager.speaker_ids if speaker_manager is not None else None,
         use_gst=use_gst,
+        voices=synthesizer.voices,
+        len=len,
+        json=json,
     )
 
 
@@ -163,9 +227,23 @@ def tts():
     speaker_idx = request.args.get("speaker_id", "")
     style_wav = request.args.get("style_wav", "")
 
+    # Language of desired voice, like "en" or "en-us"
+    # Default voice will be used if empty or not available.
+    voice_lang = request.args.get("lang", "")
+
+    # Name of voice model, like "tts_models/en/ljspeech/tacotron2-DDC"
+    # Default voice is used if empty or not available.
+    # Overrides lang.
+    voice_name = request.args.get("voice", "")
+
+    # If True, input text is parsed as SSML and may use multiple voices.
+    ssml = str2bool(request.args.get("ssml", "false").strip())
+
     style_wav = style_wav_uri_to_dict(style_wav)
     print(" > Model input: {}".format(text))
-    wavs = synthesizer.tts(text, speaker_idx=speaker_idx, style_wav=style_wav)
+    wavs = synthesizer.tts(
+        text, speaker_idx=speaker_idx, style_wav=style_wav, voice_name=voice_name, lang=voice_lang, ssml=ssml
+    )
     out = io.BytesIO()
     synthesizer.save_wav(wavs, out)
     return send_file(out, mimetype="audio/wav")

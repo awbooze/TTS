@@ -64,21 +64,31 @@
                 <ul class="list-unstyled">
                 </ul>
 
+                {% if len(voices) > 1 %}
+                Choose a voice:
+                <select id="voice_name" name="voice_name">
+                    {% for voice in voices %}
+                    <option value="{{ voice.name }}" {% if loop.index == 0 %}selected{% endif %}>{{ voice.name }} ({{ voice.lang }})</option>
+                    {% endfor %}
+                </select>
+                <br /><br />
+                {% endif %}
+
                 {%if use_gst%}
                 <input value='{"0": 0.1}' id="style_wav" placeholder="style wav (dict or path ot wav).." size=45
                     type="text" name="style_wav">
                 {%endif%}
 
                 <input id="text" placeholder="Type here..." size=45 type="text" name="text">
-                <button id="speak-button" name="speak">Speak</button><br /><br />
+                <button id="speak-button" name="speak">Speak</button>
+                <input type="checkbox" id="ssml" class="ml-3"><label class="ml-1" for="ssml">SSML</label><br /><br />
 
                 {%if use_multi_speaker%}
-                Choose a speaker:
-                <select id="speaker_id" name=speaker_id method="GET" action="/">
-                    {% for speaker_id in speaker_ids %}
-                    <option value="{{speaker_id}}" SELECTED>{{speaker_id}}</option>"
-                    {% endfor %}
-                </select><br /><br />
+                <div id="speaker_id_div">
+                    Choose a speaker:
+                    <select id="speaker_id" name=speaker_id method="GET" action="/">
+                    </select><br /><br />
+                </div>
                 {%endif%}
 
                 {%if show_details%}
@@ -93,6 +103,15 @@
 
     <!-- Bootstrap core JavaScript -->
     <script>
+        voices = {
+            {% for voice in voices %}
+            {{ json.dumps(voice.name)|safe }}: {
+                "use_gst": {{ json.dumps(voice.use_gst) }},
+                "speaker_ids": {% if not voice.speaker_manager %}null{% else %}{ {% for s, i in voice.speaker_manager.speaker_ids.items() %}{{ json.dumps(s)|safe }}: {{ i }}, {% endfor %} } {% endif %}
+            },
+            {% endfor %}
+        }
+        
         function getTextValue(textId) {
             const container = q(textId)
             if (container) {
@@ -100,17 +119,25 @@
             }
             return ""
         }
+        function set_hidden(textId, hidden) {
+            const container = q(textId)
+            if (container) {
+                container.hidden = hidden
+            }
+        }
         function q(selector) { return document.querySelector(selector) }
         q('#text').focus()
         function do_tts(e) {
             const text = q('#text').value
             const speaker_id = getTextValue('#speaker_id')
             const style_wav = getTextValue('#style_wav')
+            const voice_name = getTextValue('#voice_name')
+            const ssml = q('#ssml').checked
             if (text) {
                 q('#message').textContent = 'Synthesizing...'
                 q('#speak-button').disabled = true
                 q('#audio').hidden = true
-                synthesize(text, speaker_id, style_wav)
+                synthesize(text, speaker_id, style_wav, voice_name, ssml)
             }
             e.preventDefault()
             return false
@@ -121,8 +148,40 @@
                 do_tts(e)
             }
         })
-        function synthesize(text, speaker_id = "", style_wav = "") {
-            fetch(`/api/tts?text=${encodeURIComponent(text)}&speaker_id=${encodeURIComponent(speaker_id)}&style_wav=${encodeURIComponent(style_wav)}`, { cache: 'no-cache' })
+
+        if (q('#voice_name')) {
+            function change_voice(e) {
+                voice_name = getTextValue('#voice_name')
+
+                speaker_id_select = q('#speaker_id')
+                if (speaker_id_select) {
+                    // Clear speaker ids
+                    for (var i = speaker_id_select.options.length - 1; i >= 0; i--) {
+                        speaker_id_select.options[i].remove()
+                    }
+                }
+
+                voice = voices[voice_name]
+                if (voice) {
+                    set_hidden('#style_wav', voice.use_gst)
+                    set_hidden('#speaker_id_div', voice.speaker_ids == null)
+
+                    if ((voice.speaker_ids != null) && speaker_id_select) {
+                        Object.entries(voice.speaker_ids).forEach(function(si) {
+                            speaker_id_select.insertAdjacentHTML(
+                                'beforeend', '<option value="' + si[0] + '">' + si[0] + " (" + si[1].toString() + ")" + '</option>'
+                            )
+                        })
+
+                        speaker_id_select.selectedIndex = 0
+                    }
+                }
+            }
+            q('#voice_name').addEventListener('change', change_voice)
+            change_voice()
+        }
+        function synthesize(text, speaker_id = "", style_wav = "", voice_name = "", ssml = "") {
+            fetch(`/api/tts?text=${encodeURIComponent(text)}&speaker_id=${encodeURIComponent(speaker_id)}&style_wav=${encodeURIComponent(style_wav)}&voice=${encodeURIComponent(voice_name)}&ssml=${encodeURIComponent(ssml)}`, { cache: 'no-cache' })
                 .then(function (res) {
                     if (!res.ok) throw Error(res.statusText)
                     return res.blob()
