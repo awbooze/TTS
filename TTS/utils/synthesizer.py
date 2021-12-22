@@ -453,7 +453,8 @@ class Synthesizer(object):
             waveform = waveform.squeeze()
 
             # trim silence
-            waveform = trim_silence(waveform, sen_voice.ap)
+            if self.tts_config.audio["do_trim_silence"] is True:
+                waveform = trim_silence(waveform, self.ap)
 
             if waveform_sample_rate != self.output_sample_rate:
                 # Resample to sample rate of default voice
