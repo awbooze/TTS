@@ -67,16 +67,22 @@ def load_tts_samples(
         root_path = dataset["path"]
         meta_file_train = dataset["meta_file_train"]
         meta_file_val = dataset["meta_file_val"]
+        ignored_speakers = dataset["ignored_speakers"]
+        language = dataset["language"]
+
         # setup the right data processor
         if formatter is None:
             formatter = _get_formatter_by_name(name)
         # load train set
-        meta_data_train = formatter(root_path, meta_file_train)
+        meta_data_train = formatter(root_path, meta_file_train, ignored_speakers=ignored_speakers)
+        meta_data_train = [[*item, language] for item in meta_data_train]
+
         print(f" | > Found {len(meta_data_train)} files in {Path(root_path).resolve()}")
         # load evaluation split if set
         if eval_split:
             if meta_file_val:
-                meta_data_eval = formatter(root_path, meta_file_val)
+                meta_data_eval = formatter(root_path, meta_file_val, ignored_speakers=ignored_speakers)
+                meta_data_eval = [[*item, language] for item in meta_data_eval]
             else:
                 meta_data_eval, meta_data_train = split_dataset(meta_data_train)
             meta_data_eval_all += meta_data_eval
@@ -91,6 +97,8 @@ def load_tts_samples(
                 for idx, ins in enumerate(meta_data_eval_all):
                     attn_file = meta_data[ins[1]].strip()
                     meta_data_eval_all[idx].append(attn_file)
+        # set none for the next iter
+        formatter = None
     return meta_data_train_all, meta_data_eval_all
 
 
@@ -110,3 +118,18 @@ def _get_formatter_by_name(name):
     """Returns the respective preprocessing function."""
     thismodule = sys.modules[__name__]
     return getattr(thismodule, name.lower())
+
+
+def find_unique_chars(data_samples, verbose=True):
+    texts = "".join(item[0] for item in data_samples)
+    chars = set(texts)
+    lower_chars = filter(lambda c: c.islower(), chars)
+    chars_force_lower = [c.lower() for c in chars]
+    chars_force_lower = set(chars_force_lower)
+
+    if verbose:
+        print(f" > Number of unique characters: {len(chars)}")
+        print(f" > Unique characters: {''.join(sorted(chars))}")
+        print(f" > Unique lower characters: {''.join(sorted(lower_chars))}")
+        print(f" > Unique all forced to lower characters: {''.join(sorted(chars_force_lower))}")
+    return chars_force_lower

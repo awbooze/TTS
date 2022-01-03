@@ -23,72 +23,76 @@ def str2bool(v):
 
 
 def main():
-    # pylint: disable=bad-option-value
-    parser = argparse.ArgumentParser(
-        description="""Synthesize speech on command line.\n\n"""
-        """You can either use your trained model or choose a model from the provided list.\n\n"""
-        """If you don't specify any models, then it uses LJSpeech based English model.\n\n"""
-        """
-    # Example Runs:
+    description = """Synthesize speech on command line.
 
-    ## Single Speaker Models
+You can either use your trained model or choose a model from the provided list.
 
-    - list provided models
+If you don't specify any models, then it uses LJSpeech based English model.
 
-    ```
-    $ ./TTS/bin/synthesize.py --list_models
-    ```
+## Example Runs
 
-    - run tts with default models.
+### Single Speaker Models
+
+- List provided models:
 
     ```
-    $ ./TTS/bin synthesize.py --text "Text for TTS"
+    $ tts --list_models
     ```
 
-    - run a tts model with its default vocoder model.
+- Run TTS with default models:
 
     ```
-    $ ./TTS/bin synthesize.py --text "Text for TTS" --model_name "<language>/<dataset>/<model_name>
+    $ tts --text "Text for TTS"
     ```
 
-    - run with specific tts and vocoder models from the list
+- Run a TTS model with its default vocoder model:
 
     ```
-    $ ./TTS/bin/synthesize.py --text "Text for TTS" --model_name "<language>/<dataset>/<model_name>" --vocoder_name "<language>/<dataset>/<model_name>" --output_path
+    $ tts --text "Text for TTS" --model_name "<language>/<dataset>/<model_name>
     ```
 
-    - run your own TTS model (Using Griffin-Lim Vocoder)
+- Run with specific TTS and vocoder models from the list:
 
     ```
-    $ ./TTS/bin/synthesize.py --text "Text for TTS" --model_path path/to/model.pth.tar --config_path path/to/config.json --out_path output/path/speech.wav
+    $ tts --text "Text for TTS" --model_name "<language>/<dataset>/<model_name>" --vocoder_name "<language>/<dataset>/<model_name>" --output_path
     ```
 
-    - run your own TTS and Vocoder models
+- Run your own TTS model (Using Griffin-Lim Vocoder):
+
     ```
-    $ ./TTS/bin/synthesize.py --text "Text for TTS" --model_path path/to/config.json --config_path path/to/model.pth.tar --out_path output/path/speech.wav
+    $ tts --text "Text for TTS" --model_path path/to/model.pth.tar --config_path path/to/config.json --out_path output/path/speech.wav
+    ```
+
+- Run your own TTS and Vocoder models:
+    ```
+    $ tts --text "Text for TTS" --model_path path/to/config.json --config_path path/to/model.pth.tar --out_path output/path/speech.wav
         --vocoder_path path/to/vocoder.pth.tar --vocoder_config_path path/to/vocoder_config.json
     ```
 
-    ## MULTI-SPEAKER MODELS
+### Multi-speaker Models
 
-    - list the available speakers and choose as <speaker_id> among them.
-
-    ```
-    $ ./TTS/bin/synthesize.py --model_name "<language>/<dataset>/<model_name>"  --list_speaker_idxs
-    ```
-
-    - run the multi-speaker TTS model with the target speaker ID.
+- List the available speakers and choose as <speaker_id> among them:
 
     ```
-    $ ./TTS/bin/synthesize.py --text "Text for TTS." --out_path output/path/speech.wav --model_name "<language>/<dataset>/<model_name>"  --speaker_idx <speaker_id>
+    $ tts --model_name "<language>/<dataset>/<model_name>"  --list_speaker_idxs
     ```
 
-    - run your own multi-speaker TTS model.
+- Run the multi-speaker TTS model with the target speaker ID:
 
     ```
-    $ ./TTS/bin/synthesize.py --text "Text for TTS" --out_path output/path/speech.wav --model_path path/to/config.json --config_path path/to/model.pth.tar --speakers_file_path path/to/speaker.json --speaker_idx <speaker_id>
+    $ tts --text "Text for TTS." --out_path output/path/speech.wav --model_name "<language>/<dataset>/<model_name>"  --speaker_idx <speaker_id>
     ```
-    """,
+
+- Run your own multi-speaker TTS model:
+
+    ```
+    $ tts --text "Text for TTS" --out_path output/path/speech.wav --model_path path/to/config.json --config_path path/to/model.pth.tar --speakers_file_path path/to/speaker.json --speaker_idx <speaker_id>
+    ```
+    """
+    # We remove Markdown code formatting programmatically here to allow us to copy-and-paste from main README to keep
+    # documentation in sync more easily.
+    parser = argparse.ArgumentParser(
+        description=description.replace("    ```\n", ""),
         formatter_class=RawTextHelpFormatter,
     )
 
@@ -98,7 +102,7 @@ def main():
         nargs="?",
         const=True,
         default=False,
-        help="list available pre-trained tts and vocoder models.",
+        help="list available pre-trained TTS and vocoder models.",
     )
     parser.add_argument("--text", type=str, default=None, help="Text to generate speech.")
     parser.add_argument(
@@ -113,7 +117,7 @@ def main():
         "--model_name",
         type=str,
         default="tts_models/en/ljspeech/tacotron2-DDC",
-        help="Name of one of the pre-trained tts models in format <language>/<dataset>/<model_name>",
+        help="Name of one of the pre-trained TTS models in format <language>/<dataset>/<model_name>",
     )
     parser.add_argument(
         "--vocoder_name",
@@ -154,10 +158,17 @@ def main():
 
     # args for multi-speaker synthesis
     parser.add_argument("--speakers_file_path", type=str, help="JSON file for multi-speaker model.", default=None)
+    parser.add_argument("--language_ids_file_path", type=str, help="JSON file for multi-lingual model.", default=None)
     parser.add_argument(
         "--speaker_idx",
         type=str,
         help="Target speaker ID for a multi-speaker TTS model.",
+        default=None,
+    )
+    parser.add_argument(
+        "--language_idx",
+        type=str,
+        help="Target language ID for a multi-lingual TTS model.",
         default=None,
     )
     parser.add_argument(
@@ -170,6 +181,14 @@ def main():
     parser.add_argument(
         "--list_speaker_idxs",
         help="List available speaker ids for the defined multi-speaker model.",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+    )
+    parser.add_argument(
+        "--list_language_idxs",
+        help="List available language ids for the defined multi-lingual model.",
         type=str2bool,
         nargs="?",
         const=True,
@@ -192,7 +211,7 @@ def main():
             args.text = ttsfile.read()
 
     # print the description if either text or list_models is not set
-    if args.text is None and not args.list_models and not args.list_speaker_idxs:
+    if args.text is None and not args.list_models and not args.list_speaker_idxs and not args.list_language_idxs:
         parser.parse_args(["-h"])
 
     # load model manager
@@ -202,6 +221,7 @@ def main():
     model_path = None
     config_path = None
     speakers_file_path = None
+    language_ids_file_path = None
     vocoder_path = None
     vocoder_config_path = None
     encoder_path = None
@@ -225,6 +245,7 @@ def main():
         model_path = args.model_path
         config_path = args.config_path
         speakers_file_path = args.speakers_file_path
+        language_ids_file_path = args.language_ids_file_path
 
     if args.vocoder_path is not None:
         vocoder_path = args.vocoder_path
@@ -239,6 +260,7 @@ def main():
         model_path,
         config_path,
         speakers_file_path,
+        language_ids_file_path,
         vocoder_path,
         vocoder_config_path,
         encoder_path,
@@ -254,6 +276,14 @@ def main():
         print(synthesizer.tts_model.speaker_manager.speaker_ids)
         return
 
+    # query langauge ids of a multi-lingual model.
+    if args.list_language_idxs:
+        print(
+            " > Available language ids: (Set --language_idx flag to one of these values to use the multi-lingual model."
+        )
+        print(synthesizer.tts_model.language_manager.language_id_mapping)
+        return
+
     # check the arguments against a multi-speaker model.
     if synthesizer.tts_speakers_file and (not args.speaker_idx and not args.speaker_wav):
         print(
@@ -266,7 +296,7 @@ def main():
     print(" > Text: {}".format(args.text))
 
     # kick it
-    wav = synthesizer.tts(args.text, args.speaker_idx, args.speaker_wav)
+    wav = synthesizer.tts(args.text, args.speaker_idx, args.language_idx, args.speaker_wav)
 
     # save the results
     print(" > Saving output to {}".format(args.out_path))

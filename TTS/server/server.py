@@ -100,10 +100,18 @@ if args.vocoder_path is not None:
 
 # load models
 synthesizer = Synthesizer(
-    model_path, config_path, speakers_file_path, vocoder_path, vocoder_config_path, use_cuda=args.use_cuda
+    tts_checkpoint=model_path,
+    tts_config_path=config_path,
+    tts_speakers_file=speakers_file_path,
+    tts_languages_file=None,
+    vocoder_checkpoint=vocoder_path,
+    vocoder_config=vocoder_config_path,
+    encoder_checkpoint="",
+    encoder_config="",
+    use_cuda=args.use_cuda,
 )
 
-use_multi_speaker = hasattr(synthesizer.tts_model, "speaker_manager") and synthesizer.tts_model.num_speakers > 1
+use_multi_speaker = hasattr(synthesizer.tts_model, "num_speakers") and synthesizer.tts_model.num_speakers > 1
 speaker_manager = getattr(synthesizer.tts_model, "speaker_manager", None)
 # TODO: set this from SpeakerManager
 use_gst = synthesizer.tts_config.get("use_gst", False)
@@ -165,7 +173,7 @@ def tts():
 
     style_wav = style_wav_uri_to_dict(style_wav)
     print(" > Model input: {}".format(text))
-    wavs = synthesizer.tts(text, speaker_idx=speaker_idx, style_wav=style_wav)
+    wavs = synthesizer.tts(text, speaker_name=speaker_idx, style_wav=style_wav)
     out = io.BytesIO()
     synthesizer.save_wav(wavs, out)
     return send_file(out, mimetype="audio/wav")
