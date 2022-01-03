@@ -188,7 +188,7 @@ def main():
     if args.text is None and args.file_path is not None and not args.list_models and not args.list_speaker_idxs:
         path = args.file_path
         print(f" > Using text file at {path}")
-        with open(path, "r") as ttsfile:
+        with open(path, "r", encoding="utf8") as ttsfile:
             args.text = ttsfile.read()
 
     # print the description if either text or list_models is not set
