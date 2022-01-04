@@ -460,13 +460,13 @@ class Synthesizer(object):
                 # Resample to sample rate of default voice
                 waveform = librosa.resample(waveform, orig_sr=waveform_sample_rate, target_sr=self.output_sample_rate)
 
-            if (sen.pause_before_ms > 0):
+            if (isinstance(sen, gruut.Sentence) and sen.pause_before_ms > 0):
                 # If there is a defined pause before a sentence, calculate it via the sample rate
                 wavs += [0] * round(sen.pause_before_ms / 1000) * self.output_sample_rate
                 
             wavs += list(waveform)
             
-            if (sen.pause_after_ms > 0):
+            if (isinstance(sen, gruut.Sentence) and sen.pause_after_ms > 0):
                 wavs += [0] * round(sen.pause_after_ms / 1000) * self.output_sample_rate
             else:
                 # If no pause after a sentence, still include a slight pause. At a 22,050 hertz 
