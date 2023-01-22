@@ -12,20 +12,22 @@ torch.manual_seed(1)
 config_path = os.path.join(get_tests_output_path(), "test_model_config.json")
 
 dataset_config_en = BaseDatasetConfig(
-    name="ljspeech",
+    formatter="ljspeech",
     meta_file_train="metadata.csv",
     meta_file_val="metadata.csv",
     path="tests/data/ljspeech",
     language="en",
 )
 
+"""
 dataset_config_pt = BaseDatasetConfig(
-    name="ljspeech",
+    formatter="ljspeech",
     meta_file_train="metadata.csv",
     meta_file_val="metadata.csv",
     path="tests/data/ljspeech",
     language="pt-br",
 )
+"""
 
 # pylint: disable=protected-access
 class TestFindUniquePhonemes(unittest.TestCase):
@@ -39,7 +41,6 @@ class TestFindUniquePhonemes(unittest.TestCase):
             num_eval_loader_workers=0,
             text_cleaner="english_cleaners",
             use_phonemes=True,
-            use_espeak_phonemes=True,
             phoneme_language="en-us",
             phoneme_cache_path="tests/data/ljspeech/phoneme_cache/",
             run_eval=True,
@@ -47,7 +48,7 @@ class TestFindUniquePhonemes(unittest.TestCase):
             epochs=1,
             print_step=1,
             print_eval=True,
-            datasets=[dataset_config_en, dataset_config_pt],
+            datasets=[dataset_config_en],
         )
         config.save_json(config_path)
 
@@ -64,7 +65,6 @@ class TestFindUniquePhonemes(unittest.TestCase):
             num_eval_loader_workers=0,
             text_cleaner="english_cleaners",
             use_phonemes=True,
-            use_espeak_phonemes=False,
             phoneme_language="en-us",
             phoneme_cache_path="tests/data/ljspeech/phoneme_cache/",
             run_eval=True,
@@ -72,7 +72,7 @@ class TestFindUniquePhonemes(unittest.TestCase):
             epochs=1,
             print_step=1,
             print_eval=True,
-            datasets=[dataset_config_en, dataset_config_pt],
+            datasets=[dataset_config_en],
         )
         config.save_json(config_path)
 

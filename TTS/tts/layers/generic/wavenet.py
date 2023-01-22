@@ -65,11 +65,16 @@ class WN(torch.nn.Module):
             self.cond_layer = torch.nn.utils.weight_norm(cond_layer, name="weight")
         # intermediate layers
         for i in range(num_layers):
-            dilation = dilation_rate ** i
+            dilation = dilation_rate**i
             padding = int((kernel_size * dilation - dilation) / 2)
-            in_layer = torch.nn.Conv1d(
-                hidden_channels, 2 * hidden_channels, kernel_size, dilation=dilation, padding=padding
-            )
+            if i == 0:
+                in_layer = torch.nn.Conv1d(
+                    in_channels, 2 * hidden_channels, kernel_size, dilation=dilation, padding=padding
+                )
+            else:
+                in_layer = torch.nn.Conv1d(
+                    hidden_channels, 2 * hidden_channels, kernel_size, dilation=dilation, padding=padding
+                )
             in_layer = torch.nn.utils.weight_norm(in_layer, name="weight")
             self.in_layers.append(in_layer)
 

@@ -16,6 +16,24 @@ def resample_file(func_args):
     sf.write(filename, y, sr)
 
 
+def resample_files(input_dir, output_sr, output_dir=None, file_ext="wav", n_jobs=10):
+    if output_dir:
+        print("Recursively copying the input folder...")
+        copy_tree(input_dir, output_dir)
+        input_dir = output_dir
+
+    print("Resampling the audio files...")
+    audio_files = glob.glob(os.path.join(input_dir, f"**/*.{file_ext}"), recursive=True)
+    print(f"Found {len(audio_files)} files...")
+    audio_files = list(zip(audio_files, len(audio_files) * [output_sr]))
+    with Pool(processes=n_jobs) as p:
+        with tqdm(total=len(audio_files)) as pbar:
+            for _, _ in enumerate(p.imap_unordered(resample_file, audio_files)):
+                pbar.update()
+
+    print("Done !")
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
@@ -26,6 +44,7 @@ if __name__ == "__main__":
                                 --input_dir /root/LJSpeech-1.1/
                                 --output_sr 22050
                                 --output_dir /root/resampled_LJSpeech-1.1/
+                                --file_ext wav
                                 --n_jobs 24
                     """,
         formatter_class=RawTextHelpFormatter,
@@ -56,23 +75,17 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--file_ext",
+        type=str,
+        default="wav",
+        required=False,
+        help="Extension of the audio files to resample",
+    )
+
+    parser.add_argument(
         "--n_jobs", type=int, default=None, help="Number of threads to use, by default it uses all cores"
     )
 
     args = parser.parse_args()
 
-    if args.output_dir:
-        print("Recursively copying the input folder...")
-        copy_tree(args.input_dir, args.output_dir)
-        args.input_dir = args.output_dir
-
-    print("Resampling the audio files...")
-    audio_files = glob.glob(os.path.join(args.input_dir, "**/*.wav"), recursive=True)
-    print(f"Found {len(audio_files)} files...")
-    audio_files = list(zip(audio_files, len(audio_files) * [args.output_sr]))
-    with Pool(processes=args.n_jobs) as p:
-        with tqdm(total=len(audio_files)) as pbar:
-            for i, _ in enumerate(p.imap_unordered(resample_file, audio_files)):
-                pbar.update()
-
-    print("Done !")
+    resample_files(args.input_dir, args.output_sr, args.output_dir, args.file_ext, args.n_jobs)

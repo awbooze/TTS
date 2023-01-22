@@ -36,7 +36,7 @@ class MelganGenerator(nn.Module):
 
         # upsampling layers and residual stacks
         for idx, upsample_factor in enumerate(upsample_factors):
-            layer_in_channels = base_channels // (2 ** idx)
+            layer_in_channels = base_channels // (2**idx)
             layer_out_channels = base_channels // (2 ** (idx + 1))
             layer_filter_size = upsample_factor * 2
             layer_stride = upsample_factor
@@ -85,9 +85,9 @@ class MelganGenerator(nn.Module):
                     layer.remove_weight_norm()
 
     def load_checkpoint(
-        self, config, checkpoint_path, eval=False
+        self, config, checkpoint_path, eval=False, cache=False
     ):  # pylint: disable=unused-argument, redefined-builtin
-        state = load_fsspec(checkpoint_path, map_location=torch.device("cpu"))
+        state = load_fsspec(checkpoint_path, map_location=torch.device("cpu"), cache=cache)
         self.load_state_dict(state["model"])
         if eval:
             self.eval()

@@ -37,7 +37,7 @@ def register_config(model_name: str) -> Coqpit:
     """
     config_class = None
     config_name = model_name + "_config"
-    paths = ["TTS.tts.configs", "TTS.vocoder.configs", "TTS.speaker_encoder"]
+    paths = ["TTS.tts.configs", "TTS.vocoder.configs", "TTS.encoder.configs"]
     for path in paths:
         try:
             config_class = find_module(path, config_name)
@@ -62,7 +62,7 @@ def _process_model_name(config_dict: Dict) -> str:
     return model_name
 
 
-def load_config(config_path: str) -> None:
+def load_config(config_path: str) -> Coqpit:
     """Import `json` or `yaml` files as TTS configs. First, load the input file as a `dict` and check the model name
     to find the corresponding Config class. Then initialize the Config.
 

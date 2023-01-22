@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from threading import Lock
 from typing import Union
 
 from flask import Flask, render_template, request, send_file
@@ -88,7 +89,7 @@ if args.model_name is not None and not args.model_path:
 if args.vocoder_name is not None and not args.vocoder_path:
     vocoder_path, vocoder_config_path, _ = manager.download_model(args.vocoder_name)
 
-# CASE3: set custome model paths
+# CASE3: set custom model paths
 if args.model_path is not None:
     model_path = args.model_path
     config_path = args.config_path
@@ -111,7 +112,10 @@ synthesizer = Synthesizer(
     use_cuda=args.use_cuda,
 )
 
-use_multi_speaker = hasattr(synthesizer.tts_model, "num_speakers") and synthesizer.tts_model.num_speakers > 1
+use_multi_speaker = hasattr(synthesizer.tts_model, "num_speakers") and (
+    synthesizer.tts_model.num_speakers > 1 or synthesizer.tts_speakers_file is not None
+)
+
 speaker_manager = getattr(synthesizer.tts_model, "speaker_manager", None)
 # TODO: set this from SpeakerManager
 use_gst = synthesizer.tts_config.get("use_gst", False)
@@ -143,7 +147,7 @@ def index():
         "index.html",
         show_details=args.show_details,
         use_multi_speaker=use_multi_speaker,
-        speaker_ids=speaker_manager.speaker_ids if speaker_manager is not None else None,
+        speaker_ids=speaker_manager.name_to_id if speaker_manager is not None else None,
         use_gst=use_gst,
     )
 
@@ -165,17 +169,21 @@ def details():
     )
 
 
+lock = Lock()
+
+
 @app.route("/api/tts", methods=["GET"])
 def tts():
-    text = request.args.get("text")
-    speaker_idx = request.args.get("speaker_id", "")
-    style_wav = request.args.get("style_wav", "")
-
-    style_wav = style_wav_uri_to_dict(style_wav)
-    print(" > Model input: {}".format(text))
-    wavs = synthesizer.tts(text, speaker_name=speaker_idx, style_wav=style_wav)
-    out = io.BytesIO()
-    synthesizer.save_wav(wavs, out)
+    with lock:
+        text = request.args.get("text")
+        speaker_idx = request.args.get("speaker_id", "")
+        style_wav = request.args.get("style_wav", "")
+        style_wav = style_wav_uri_to_dict(style_wav)
+        print(" > Model input: {}".format(text))
+        print(" > Speaker Idx: {}".format(speaker_idx))
+        wavs = synthesizer.tts(text, speaker_name=speaker_idx, style_wav=style_wav)
+        out = io.BytesIO()
+        synthesizer.save_wav(wavs, out)
     return send_file(out, mimetype="audio/wav")
 
 

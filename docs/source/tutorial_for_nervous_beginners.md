@@ -50,13 +50,13 @@ A breakdown of a simple script that trains a GlowTTS model on the LJspeech datas
     - Fine-tune a model.
 
         ```bash
-        CUDA_VISIBLE_DEVICES=0 python train.py --restore_path path/to/model/checkpoint.pth.tar
+        CUDA_VISIBLE_DEVICES=0 python train.py --restore_path path/to/model/checkpoint.pth
         ```
 
     - Run multi-gpu training.
 
         ```bash
-        CUDA_VISIBLE_DEVICES=0,1,2 python TTS/bin/distribute.py --script train.py
+        CUDA_VISIBLE_DEVICES=0,1,2 python -m trainer.distribute --script train.py
         ```
 
 ### CLI Way
@@ -84,7 +84,7 @@ We still support running training from CLI like in the old days. The same traini
         "print_eval": true,
         "mixed_precision": false,
         "output_path": "recipes/ljspeech/glow_tts/",
-        "datasets":[{"name": "ljspeech", "meta_file_train":"metadata.csv", "path": "recipes/ljspeech/LJSpeech-1.1/"}]
+        "datasets":[{"formatter": "ljspeech", "meta_file_train":"metadata.csv", "path": "recipes/ljspeech/LJSpeech-1.1/"}]
     }
     ```
 
@@ -120,6 +120,3 @@ $ tts-server -h # see the help
 $ tts-server --list_models  # list the available models.
 ```
 ![server.gif](https://github.com/coqui-ai/TTS/raw/main/images/demo_server.gif)
-
-
-

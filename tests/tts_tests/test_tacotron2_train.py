@@ -1,6 +1,9 @@
 import glob
+import json
 import os
 import shutil
+
+from trainer import get_last_checkpoint
 
 from tests import get_device_id, get_tests_output_path, run_cli
 from TTS.tts.configs.tacotron2_config import Tacotron2Config
@@ -36,7 +39,7 @@ config.save_json(config_path)
 command_train = (
     f"CUDA_VISIBLE_DEVICES='{get_device_id()}' python TTS/bin/train_tts.py --config_path {config_path} "
     f"--coqpit.output_path {output_path} "
-    "--coqpit.datasets.0.name ljspeech "
+    "--coqpit.datasets.0.formatter ljspeech "
     "--coqpit.datasets.0.meta_file_train metadata.csv "
     "--coqpit.datasets.0.meta_file_val metadata.csv "
     "--coqpit.datasets.0.path tests/data/ljspeech "
@@ -46,6 +49,22 @@ run_cli(command_train)
 
 # Find latest folder
 continue_path = max(glob.glob(os.path.join(output_path, "*/")), key=os.path.getmtime)
+
+# Inference using TTS API
+continue_config_path = os.path.join(continue_path, "config.json")
+continue_restore_path, _ = get_last_checkpoint(continue_path)
+out_wav_path = os.path.join(get_tests_output_path(), "output.wav")
+
+# Check integrity of the config
+with open(continue_config_path, "r", encoding="utf-8") as f:
+    config_loaded = json.load(f)
+assert config_loaded["characters"] is not None
+assert config_loaded["output_path"] in continue_path
+assert config_loaded["test_delay_epochs"] == 0
+
+# Load the model and run inference
+inference_command = f"CUDA_VISIBLE_DEVICES='{get_device_id()}' tts --text 'This is an example.' --config_path {continue_config_path} --model_path {continue_restore_path} --out_path {out_wav_path}"
+run_cli(inference_command)
 
 # restore the model and continue training for one more epoch
 command_train = f"CUDA_VISIBLE_DEVICES='{get_device_id()}' python TTS/bin/train_tts.py --continue_path {continue_path} "

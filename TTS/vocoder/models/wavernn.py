@@ -225,7 +225,7 @@ class Wavernn(BaseVocoder):
         super().__init__(config)
 
         if isinstance(self.args.mode, int):
-            self.n_classes = 2 ** self.args.mode
+            self.n_classes = 2**self.args.mode
         elif self.args.mode == "mold":
             self.n_classes = 3 * 10
         elif self.args.mode == "gauss":
@@ -233,6 +233,7 @@ class Wavernn(BaseVocoder):
         else:
             raise RuntimeError("Unknown model mode value - ", self.args.mode)
 
+        self.ap = AudioProcessor(**config.audio.to_dict())
         self.aux_dims = self.args.res_out_dims // 4
 
         if self.args.use_upsample_net:
@@ -541,9 +542,9 @@ class Wavernn(BaseVocoder):
         return unfolded
 
     def load_checkpoint(
-        self, config, checkpoint_path, eval=False
+        self, config, checkpoint_path, eval=False, cache=False
     ):  # pylint: disable=unused-argument, redefined-builtin
-        state = load_fsspec(checkpoint_path, map_location=torch.device("cpu"))
+        state = load_fsspec(checkpoint_path, map_location=torch.device("cpu"), cache=cache)
         self.load_state_dict(state["model"])
         if eval:
             self.eval()
@@ -568,12 +569,13 @@ class Wavernn(BaseVocoder):
         return self.train_step(batch, criterion)
 
     @torch.no_grad()
-    def test_run(
-        self, assets: Dict, samples: List[Dict], output: Dict  # pylint: disable=unused-argument
+    def test(
+        self, assets: Dict, test_loader: "DataLoader", output: Dict  # pylint: disable=unused-argument
     ) -> Tuple[Dict, Dict]:
-        ap = assets["audio_processor"]
+        ap = self.ap
         figures = {}
         audios = {}
+        samples = test_loader.dataset.load_test_samples(1)
         for idx, sample in enumerate(samples):
             x = torch.FloatTensor(sample[0])
             x = x.to(next(self.parameters()).device)
@@ -586,7 +588,15 @@ class Wavernn(BaseVocoder):
                 }
             )
             audios.update({f"test_{idx}/audio": y_hat})
+            # audios.update({f"real_{idx}/audio": y_hat})
         return figures, audios
+
+    def test_log(
+        self, outputs: Dict, logger: "Logger", assets: Dict, steps: int  # pylint: disable=unused-argument
+    ) -> Tuple[Dict, np.ndarray]:
+        figures, audios = outputs
+        logger.eval_figures(steps, figures)
+        logger.eval_audios(steps, audios, self.ap.sample_rate)
 
     @staticmethod
     def format_batch(batch: Dict) -> Dict:
@@ -600,14 +610,14 @@ class Wavernn(BaseVocoder):
         config: Coqpit,
         assets: Dict,
         is_eval: True,
-        data_items: List,
+        samples: List,
         verbose: bool,
         num_gpus: int,
     ):
-        ap = assets["audio_processor"]
+        ap = self.ap
         dataset = WaveRNNDataset(
             ap=ap,
-            items=data_items,
+            items=samples,
             seq_len=config.seq_len,
             hop_len=ap.hop_length,
             pad=config.model_args.pad,
@@ -631,3 +641,7 @@ class Wavernn(BaseVocoder):
     def get_criterion(self):
         # define train functions
         return WaveRNNLoss(self.args.mode)
+
+    @staticmethod
+    def init_from_config(config: "WavernnConfig"):
+        return Wavernn(config)
