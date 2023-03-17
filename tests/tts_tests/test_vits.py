@@ -210,7 +210,7 @@ class TestVits(unittest.TestCase):
             num_chars=32,
             use_d_vector_file=True,
             d_vector_dim=256,
-            d_vector_file=os.path.join(get_tests_data_path(), "dummy_speakers.json"),
+            d_vector_file=[os.path.join(get_tests_data_path(), "dummy_speakers.json")],
         )
         config = VitsConfig(model_args=args)
         model = Vits.init_from_config(config, verbose=False).to(device)
@@ -355,7 +355,7 @@ class TestVits(unittest.TestCase):
             num_chars=32,
             use_d_vector_file=True,
             d_vector_dim=256,
-            d_vector_file=os.path.join(get_tests_data_path(), "dummy_speakers.json"),
+            d_vector_file=[os.path.join(get_tests_data_path(), "dummy_speakers.json")],
         )
         config = VitsConfig(model_args=args)
         model = Vits.init_from_config(config, verbose=False).to(device)
@@ -401,7 +401,6 @@ class TestVits(unittest.TestCase):
     def test_train_step(self):
         # setup the model
         with torch.autograd.set_detect_anomaly(True):
-
             config = VitsConfig(model_args=VitsArgs(num_chars=32, spec_segment_size=10))
             model = Vits(config).to(device)
             model.train()
@@ -587,7 +586,7 @@ class TestVits(unittest.TestCase):
                 num_chars=32,
                 use_d_vector_file=True,
                 d_vector_dim=256,
-                d_vector_file=os.path.join(get_tests_data_path(), "dummy_speakers.json"),
+                d_vector_file=[os.path.join(get_tests_data_path(), "dummy_speakers.json")],
             )
         )
         model = Vits.init_from_config(config, verbose=False).to(device)
