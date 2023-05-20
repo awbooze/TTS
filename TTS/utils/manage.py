@@ -3,7 +3,7 @@ import os
 import zipfile
 from pathlib import Path
 from shutil import copyfile, rmtree
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import requests
 from tqdm import tqdm
@@ -62,6 +62,28 @@ class ModelManager(object):
         """
         with open(file_path, "r", encoding="utf-8") as json_file:
             self.models_dict = json.load(json_file)
+
+    def add_cs_api_models(self, model_list: List[str]):
+        """Add list of Coqui Studio model names that are returned from the api
+
+        Each has the following format `<coqui_studio_model>/en/<speaker_name>/<coqui_studio_model>`
+        """
+
+        def _add_model(model_name: str):
+            if not "coqui_studio" in model_name:
+                return
+            model_type, lang, dataset, model = model_name.split("/")
+            if model_type not in self.models_dict:
+                self.models_dict[model_type] = {}
+            if lang not in self.models_dict[model_type]:
+                self.models_dict[model_type][lang] = {}
+            if dataset not in self.models_dict[model_type][lang]:
+                self.models_dict[model_type][lang][dataset] = {}
+            if model not in self.models_dict[model_type][lang][dataset]:
+                self.models_dict[model_type][lang][dataset][model] = {}
+
+        for model_name in model_list:
+            _add_model(model_name)
 
     def _list_models(self, model_type, model_count=0):
         if self.verbose:
@@ -185,6 +207,13 @@ class ModelManager(object):
         """
         return self._list_for_model_type("vocoder_models")
 
+    def list_vc_models(self):
+        """Print all the voice conversion models and return a list of model names
+
+        Format is `language/dataset/model`
+        """
+        return self._list_for_model_type("voice_conversion_models")
+
     def list_langs(self):
         """Print all the available languages"""
         print(" Name format: type/language")
@@ -234,6 +263,7 @@ class ModelManager(object):
         model_type, lang, dataset, model = model_name.split("/")
         model_full_name = f"{model_type}--{lang}--{dataset}--{model}"
         model_item = self.models_dict[model_type][lang][dataset][model]
+        model_item["model_type"] = model_type
         # set the model specific output path
         output_path = os.path.join(self.output_prefix, model_full_name)
         if os.path.exists(output_path):
@@ -242,10 +272,16 @@ class ModelManager(object):
             os.makedirs(output_path, exist_ok=True)
             print(f" > Downloading model to {output_path}")
             # download from github release
-            self._download_zip_file(model_item["github_rls_url"], output_path, self.progress_bar)
-            self.print_model_license(model_item=model_item)
+            if isinstance(model_item["github_rls_url"], list):
+                self._download_model_files(model_item["github_rls_url"], output_path, self.progress_bar)
+            else:
+                self._download_zip_file(model_item["github_rls_url"], output_path, self.progress_bar)
+        self.print_model_license(model_item=model_item)
         # find downloaded files
-        output_model_path, output_config_path = self._find_files(output_path)
+        output_model_path = output_path
+        output_config_path = None
+        if model != "tortoise-v2":
+            output_model_path, output_config_path = self._find_files(output_path)
         # update paths in the config.json
         self._update_paths(output_path, output_config_path)
         return output_model_path, output_config_path, model_item
@@ -384,6 +420,25 @@ class ModelManager(object):
                 copyfile(src_path, dst_path)
         # remove the extracted folder
         rmtree(os.path.join(output_folder, z.namelist()[0]))
+
+    @staticmethod
+    def _download_model_files(file_urls, output_folder, progress_bar):
+        """Download the github releases"""
+        for file_url in file_urls:
+            # download the file
+            r = requests.get(file_url, stream=True)
+            # extract the file
+            bease_filename = file_url.split("/")[-1]
+            temp_zip_name = os.path.join(output_folder, bease_filename)
+            total_size_in_bytes = int(r.headers.get("content-length", 0))
+            block_size = 1024  # 1 Kibibyte
+            with open(temp_zip_name, "wb") as file:
+                if progress_bar:
+                    progress_bar = tqdm(total=total_size_in_bytes, unit="iB", unit_scale=True)
+                for data in r.iter_content(block_size):
+                    if progress_bar:
+                        progress_bar.update(len(data))
+                    file.write(data)
 
     @staticmethod
     def _check_dict_key(my_dict, key):

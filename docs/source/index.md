@@ -22,6 +22,7 @@
     inference
     docker_images
     implementing_a_new_model
+    implementing_a_new_language_frontend
     training_a_model
     finetuning
     configuration
@@ -50,6 +51,7 @@
     models/forward_tts.md
     models/tacotron1-2.md
     models/overflow.md
+    models/tortoise.md
 
 .. toctree::
     :maxdepth: 2

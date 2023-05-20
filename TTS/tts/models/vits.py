@@ -130,6 +130,7 @@ def wav_to_spec(y, n_fft, hop_length, win_length, center=False):
         pad_mode="reflect",
         normalized=False,
         onesided=True,
+        return_complex=False,
     )
 
     spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-6)
@@ -148,7 +149,7 @@ def spec_to_mel(spec, n_fft, num_mels, sample_rate, fmin, fmax):
     dtype_device = str(spec.dtype) + "_" + str(spec.device)
     fmax_dtype_device = str(fmax) + "_" + dtype_device
     if fmax_dtype_device not in mel_basis:
-        mel = librosa_mel_fn(sample_rate, n_fft, num_mels, fmin, fmax)
+        mel = librosa_mel_fn(sr=sample_rate, n_fft=n_fft, n_mels=num_mels, fmin=fmin, fmax=fmax)
         mel_basis[fmax_dtype_device] = torch.from_numpy(mel).to(dtype=spec.dtype, device=spec.device)
     mel = torch.matmul(mel_basis[fmax_dtype_device], spec)
     mel = amp_to_db(mel)
@@ -175,7 +176,7 @@ def wav_to_mel(y, n_fft, num_mels, sample_rate, hop_length, win_length, fmin, fm
     fmax_dtype_device = str(fmax) + "_" + dtype_device
     wnsize_dtype_device = str(win_length) + "_" + dtype_device
     if fmax_dtype_device not in mel_basis:
-        mel = librosa_mel_fn(sample_rate, n_fft, num_mels, fmin, fmax)
+        mel = librosa_mel_fn(sr=sample_rate, n_fft=n_fft, n_mels=num_mels, fmin=fmin, fmax=fmax)
         mel_basis[fmax_dtype_device] = torch.from_numpy(mel).to(dtype=y.dtype, device=y.device)
     if wnsize_dtype_device not in hann_window:
         hann_window[wnsize_dtype_device] = torch.hann_window(win_length).to(dtype=y.dtype, device=y.device)
@@ -197,6 +198,7 @@ def wav_to_mel(y, n_fft, num_mels, sample_rate, hop_length, win_length, fmin, fm
         pad_mode="reflect",
         normalized=False,
         onesided=True,
+        return_complex=False,
     )
 
     spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-6)
@@ -1470,7 +1472,6 @@ class Vits(BaseTTS):
 
         if speaker_ids is not None:
             speaker_ids = torch.LongTensor(speaker_ids)
-            batch["speaker_ids"] = speaker_ids
 
         # get d_vectors from audio file names
         if self.speaker_manager is not None and self.speaker_manager.embeddings and self.args.use_d_vector_file:
@@ -1756,6 +1757,115 @@ class Vits(BaseTTS):
                 config.model_args.speaker_encoder_model_path, config.model_args.speaker_encoder_config_path
             )
         return Vits(new_config, ap, tokenizer, speaker_manager, language_manager)
+
+    def export_onnx(self, output_path: str = "coqui_vits.onnx", verbose: bool = True):
+        """Export model to ONNX format for inference
+
+        Args:
+            output_path (str): Path to save the exported model.
+            verbose (bool): Print verbose information. Defaults to True.
+        """
+
+        # rollback values
+        _forward = self.forward
+        disc = self.disc
+        training = self.training
+
+        # set export mode
+        self.disc = None
+        self.eval()
+
+        def onnx_inference(text, text_lengths, scales, sid=None):
+            noise_scale = scales[0]
+            length_scale = scales[1]
+            noise_scale_dp = scales[2]
+            self.noise_scale = noise_scale
+            self.length_scale = length_scale
+            self.noise_scale_dp = noise_scale_dp
+            return self.inference(
+                text,
+                aux_input={
+                    "x_lengths": text_lengths,
+                    "d_vectors": None,
+                    "speaker_ids": sid,
+                    "language_ids": None,
+                    "durations": None,
+                },
+            )["model_outputs"]
+
+        self.forward = onnx_inference
+
+        # set dummy inputs
+        dummy_input_length = 100
+        sequences = torch.randint(low=0, high=self.args.num_chars, size=(1, dummy_input_length), dtype=torch.long)
+        sequence_lengths = torch.LongTensor([sequences.size(1)])
+        sepaker_id = None
+        if self.num_speakers > 1:
+            sepaker_id = torch.LongTensor([0])
+        scales = torch.FloatTensor([self.inference_noise_scale, self.length_scale, self.inference_noise_scale_dp])
+        dummy_input = (sequences, sequence_lengths, scales, sepaker_id)
+
+        # export to ONNX
+        torch.onnx.export(
+            model=self,
+            args=dummy_input,
+            opset_version=15,
+            f=output_path,
+            verbose=verbose,
+            input_names=["input", "input_lengths", "scales", "sid"],
+            output_names=["output"],
+            dynamic_axes={
+                "input": {0: "batch_size", 1: "phonemes"},
+                "input_lengths": {0: "batch_size"},
+                "output": {0: "batch_size", 1: "time1", 2: "time2"},
+            },
+        )
+
+        # rollback
+        self.forward = _forward
+        if training:
+            self.train()
+        self.disc = disc
+
+    def load_onnx(self, model_path: str, cuda=False):
+        import onnxruntime as ort
+
+        providers = ["CPUExecutionProvider" if cuda is False else "CUDAExecutionProvider"]
+        sess_options = ort.SessionOptions()
+        self.onnx_sess = ort.InferenceSession(
+            model_path,
+            sess_options=sess_options,
+            providers=providers,
+        )
+
+    def inference_onnx(self, x, x_lengths=None):
+        """ONNX inference (only single speaker models are supported)
+
+        TODO: implement multi speaker support.
+        """
+
+        if isinstance(x, torch.Tensor):
+            x = x.cpu().numpy()
+
+        if x_lengths is None:
+            x_lengths = np.array([x.shape[1]], dtype=np.int64)
+
+        if isinstance(x_lengths, torch.Tensor):
+            x_lengths = x_lengths.cpu().numpy()
+        scales = np.array(
+            [self.inference_noise_scale, self.length_scale, self.inference_noise_scale_dp],
+            dtype=np.float32,
+        )
+        audio = self.onnx_sess.run(
+            ["output"],
+            {
+                "input": x,
+                "input_lengths": x_lengths,
+                "scales": scales,
+                "sid": None,
+            },
+        )
+        return audio[0][0]
 
 
 ##################################
